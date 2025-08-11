@@ -1,0 +1,7 @@
+ollama
+pandas
+streamlit
+pymongo
+pydantic 
+langchain_community
+langchain_core
