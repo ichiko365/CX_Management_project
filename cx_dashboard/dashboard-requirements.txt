@@ -1,7 +1,13 @@
 ollama
 pandas
 streamlit
-pymongo
 pydantic 
 langchain_community
 langchain_core
+sqlalchemy 
+psycopg2-binary 
+python-dotenv
+scikit-learn
+langchain_ollama
+tqdm
+from_root
