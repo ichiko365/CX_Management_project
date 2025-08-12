@@ -9,7 +9,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 
 # Import your custom modules
-from .structured_output import ReviewAnalysis
+# Make sure this is the correct, updated Pydantic model (e.g., DashboardAnalysis)
+from .structured_output import DashboardAnalysis as ReviewAnalysis 
 from .prompt import detailed_prompt_template
 
 # Get a logger instance for this module
@@ -22,7 +23,6 @@ class LLMAnalysis:
     def __init__(self, model_name: str = "llama3"):
         """
         Initializes the LangChain chain once to be reused for all analyses.
-        This is much more efficient than rebuilding it for every review.
         """
         logger.info(f"Initializing LLM chain with model: {model_name}")
         try:
@@ -47,23 +47,28 @@ class LLMAnalysis:
             logger.error(f"Error analyzing review text: '{review_text[:50]}...'. Error: {e}")
             return None
 
-    # In your LLMAnalysis class inside llm_analyzer.py
-
     def run_analysis_on_list(self, data_list: List[Dict]) -> List[Dict]:
+        """
+        Analyzes each review in a list and merges the original data with the
+        LLM analysis result.
+        """
         analysis_results = []
         logger.info(f"Starting analysis on a list of {len(data_list)} reviews...")
 
         for review_data in tqdm(data_list, desc="Analyzing Reviews"):
-            # 'review_data' is a dictionary like {'id': 123, 'text': '...'}
+            # 'review_data' is a dictionary like {'id': 123, 'asin': '...', 'title': '...', 'region': '...', 'text': '...'}
             
             # 1. Analyze the 'text' part of the dictionary
             analysis_dict = self.analyze_review(review_data['text'])
             
-            # --- THIS IS THE CRUCIAL PART ---
-            # 2. If the analysis is successful, attach the original 'id'
+            # 2. If the analysis is successful, merge it with the original data
             if analysis_dict:
-                # Get the 'id' from the original input data for this loop iteration
+                # --- THIS IS THE UPDATED PART ---
+                # Attach all pass-through data from the input to the output
                 analysis_dict['original_id'] = review_data.get('id')
+                analysis_dict['asin'] = review_data.get('asin')
+                analysis_dict['title'] = review_data.get('title')
+                analysis_dict['region'] = review_data.get('region')
                 analysis_results.append(analysis_dict)
 
         logger.info(f"Analysis complete. Generated {len(analysis_results)} results.")

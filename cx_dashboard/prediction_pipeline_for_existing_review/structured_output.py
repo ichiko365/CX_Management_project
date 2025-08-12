@@ -1,15 +1,29 @@
 from pydantic import BaseModel, Field
-from typing import Dict
+from typing import Dict, List
 
-class ReviewAnalysis(BaseModel):
+class DashboardAnalysis(BaseModel):
     """
-    Defines the structured data contract for the LLM's analysis output.
+    Defines the rich, structured data the LLM must generate to power the dashboard.
     """
     sentiment: str = Field(description="The overall sentiment: 'Positive', 'Negative', or 'Neutral'")
-    main_topic: str = Field(description="The single most fitting category from ['Durability', 'Performance', 'Shipping', 'Price', 'Features', 'Usability', 'Customer Service', 'Other']")
     
-    # --- THIS IS THE UPDATED LINE ---
-    key_drivers: Dict[str, str] = Field(description="A dictionary where keys are specific features mentioned and values are their corresponding sentiment ('Positive', 'Negative', or 'Neutral'). For example: {'Battery Life': 'Negative', 'Screen Quality': 'Positive'}.")
+    summary: str = Field(description="A concise, single-sentence summary of the review, written from a neutral, third-person perspective.")
     
-    is_actionable: bool = Field(description="A boolean (true or false). Set to true only if the review contains specific, concrete feedback.")
-    summary: str = Field(description="A concise, single-sentence summary of the review's main point.")
+    key_drivers: Dict[str, str] = Field(
+        description="A dictionary mapping specific features to their sentiment ('Positive', 'Negative'). E.g., {'Color Match': 'Positive'}"
+    )
+    
+    # For the 'Urgent Issues' KPI and queue severity
+    urgency_score: int = Field(
+        description="An integer from 1 (low) to 5 (critical) indicating how urgently this review needs a human response."
+    )
+    
+    # For the 'Urgent Issues' queue tag pills
+    issue_tags: List[str] = Field(
+        description="A list of 1-3 short, relevant keyword tags that categorize the main issues, e.g., ['allergic reaction', 'wrong shade']."
+    )
+    
+    # For the 'Category Distribution' chart
+    primary_category: str = Field(
+        description="The single best product category from the review, e.g., 'Skincare', 'Makeup', 'Haircare', 'Fragrance'."
+    )
