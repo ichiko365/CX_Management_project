@@ -17,7 +17,7 @@ def load_data(path: str):
 
 # Change to current directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-df = load_data('../cx_dashboard/data/amazon_data_v5.csv')
+df = load_data('../data/amazon_data_v5.csv')
 
 # Ensure ReviewTime parsed early for filters
 if 'ReviewTime' in df.columns:
