@@ -21,7 +21,7 @@ def main():
     if not db_engine:
         log.error("Aborting pipeline due to database connection failure."); return
 
-    pending_df = fetch_pending_reviews(engine=db_engine, batch_size=300)
+    pending_df = fetch_pending_reviews(engine=db_engine, batch_size=20)
     if pending_df.empty:
         log.info("No pending reviews found. Exiting pipeline."); return
     log.info(f"Stage 1 complete. Fetched {len(pending_df)} reviews.")

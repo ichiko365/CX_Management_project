@@ -9,6 +9,7 @@ Rules (keep it simple and strict):
 4) key_drivers values must be only "Positive" or "Negative".
 5) issue_tags: Provide 1–2 tags, each 1–2 words, describing issues/problems only (no positive tags). Keep them beauty-relevant.
 6) primary_category: Choose from "Makeup", "Skincare", "Haircare", "Fragrance", "Beauty Tools"; use "other" if unclear.
+7) Use canonical driver names (e.g., "Product Performance", "Value for Money", "Fragrance", "Texture", "Color Accuracy", "Longevity", "Packaging", "Application Quality", "Skin Compatibility", "Shipping Time"). Avoid synonyms like "performance", "value", or "color" when a canonical exists.
 
 ---
 ## SCHEMA:
