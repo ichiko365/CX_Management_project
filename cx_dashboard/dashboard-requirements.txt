@@ -11,3 +11,5 @@ scikit-learn
 langchain_ollama
 tqdm
 from_root
+fastapi
+uvicorn
