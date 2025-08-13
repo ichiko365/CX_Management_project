@@ -27,12 +27,13 @@ class LLMAnalysis:
         logger.info(f"Initializing LLM chain with model: {model_name}")
         try:
             parser = PydanticOutputParser(pydantic_object=ReviewAnalysis)
-            prompt = ChatPromptTemplate.from_template(
-                template=detailed_prompt_template,
-                partial_variables={"format_instructions": parser.get_format_instructions()}
+            # Build a chat prompt and partially fill format instructions.
+            chat_prompt = ChatPromptTemplate.from_template(detailed_prompt_template).partial(
+                format_instructions=parser.get_format_instructions()
             )
-            model = ChatOllama(model=model_name)
-            self.chain = prompt | model | parser
+            # Hint the model to produce JSON-only outputs
+            model = ChatOllama(model=model_name, format="json")
+            self.chain = chat_prompt | model | parser
             logger.info("LLM chain initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize LLM chain: {e}")
