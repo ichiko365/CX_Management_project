@@ -54,7 +54,8 @@ class DataSaver:
             urgency_score INTEGER,
             issue_tags TEXT[],
             primary_category VARCHAR(50),
-            analysis_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            analysis_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            review_date TIMESTAMP WITH TIME ZONE
         );
         """
         try:
@@ -89,13 +90,13 @@ class DataSaver:
                         continue
 
                     insert_sql = text("""
-                        INSERT INTO analysis_results (original_review_id, asin, title, region, sentiment, summary, key_drivers, urgency_score, issue_tags, primary_category)
-                        VALUES (:original_id, :asin, :title, :region, :sentiment, :summary, :drivers, :urgency, :tags, :category)
+                        INSERT INTO analysis_results (original_review_id, asin, title, region, sentiment, summary, key_drivers, urgency_score, issue_tags, primary_category, review_date)
+                        VALUES (:original_id, :asin, :title, :region, :sentiment, :summary, :drivers, :urgency, :tags, :category, :review_date)
                         ON CONFLICT (original_review_id) DO UPDATE SET
                             asin = EXCLUDED.asin, title = EXCLUDED.title, region = EXCLUDED.region,
                             sentiment = EXCLUDED.sentiment, summary = EXCLUDED.summary, key_drivers = EXCLUDED.key_drivers,
                             urgency_score = EXCLUDED.urgency_score, issue_tags = EXCLUDED.issue_tags,
-                            primary_category = EXCLUDED.primary_category, analysis_timestamp = CURRENT_TIMESTAMP;
+                            primary_category = EXCLUDED.primary_category, analysis_timestamp = CURRENT_TIMESTAMP, review_date = EXCLUDED.review_date;
                     """)
                     
                     params = {
@@ -108,7 +109,8 @@ class DataSaver:
                         "drivers": json.dumps(result.get('key_drivers')),
                         "urgency": result.get('urgency_score'),
                         "tags": result.get('issue_tags'),
-                        "category": result.get('primary_category')
+                        "category": result.get('primary_category'),
+                        "review_date": result.get('review_date')
                     }
                     result_session.execute(insert_sql, params)
                 

@@ -3,6 +3,7 @@ import pandas as pd
 import json
 from scipy.ndimage import gaussian_filter1d
 import matplotlib.pyplot as plt
+import os
 
 # --- Sidebar: App title & data loading options ---
 st.sidebar.title("Amazon Reviews Explorer")
@@ -14,18 +15,20 @@ st.sidebar.title("Amazon Reviews Explorer")
 def load_data(path: str):
     return pd.read_csv(path)
 
-df = load_data('amazon_data_v2.csv')
+# Change to current directory
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+df = load_data('../cx_dashboard/data/amazon_data_v5.csv')
 
-# Ensure reviewTime parsed early for filters
-if 'reviewTime' in df.columns:
-    df['reviewTime'] = pd.to_datetime(df['reviewTime'], errors='coerce')
+# Ensure ReviewTime parsed early for filters
+if 'ReviewTime' in df.columns:
+    df['ReviewTime'] = pd.to_datetime(df['ReviewTime'], errors='coerce')
 
 # --- Sidebar: Filters ---
 with st.sidebar.expander("Filters", expanded=True):
     # Date range
-    if 'reviewTime' in df.columns:
-        min_date = df['reviewTime'].min()
-        max_date = df['reviewTime'].max()
+    if 'ReviewTime' in df.columns:
+        min_date = df['ReviewTime'].min()
+        max_date = df['ReviewTime'].max()
         date_range = st.date_input(
             "Review date range", 
             value=(min_date.date() if pd.notnull(min_date) else None, max_date.date() if pd.notnull(max_date) else None),
@@ -36,9 +39,9 @@ with st.sidebar.expander("Filters", expanded=True):
         date_range = None
 
     # Rating range
-    if 'overall' in df.columns:
-        min_rating = float(df['overall'].min())
-        max_rating = float(df['overall'].max())
+    if 'Rating' in df.columns:
+        min_rating = float(df['Rating'].min())
+        max_rating = float(df['Rating'].max())
         rating_range = st.slider("Rating range", min_rating, max_rating, (min_rating, max_rating))
     else:
         rating_range = None
@@ -50,7 +53,7 @@ with st.sidebar.expander("Filters", expanded=True):
     else:
         selected_brands = []
 
-    # Keyword search (applies to reviewText + summary)
+    # Keyword search (applies to Review + summary)
     keyword = st.text_input("Keyword in text/summary")
 
 # --- Sidebar: Display & Smoothing Controls ---
@@ -64,19 +67,19 @@ with st.sidebar.expander("Display Options", expanded=True):
 filtered = df.copy()
 if date_range and isinstance(date_range, (list, tuple)) and len(date_range) == 2 and all(date_range):
     start, end = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-    filtered = filtered[(filtered['reviewTime'] >= start) & (filtered['reviewTime'] <= end)]
+    filtered = filtered[(filtered['ReviewTime'] >= start) & (filtered['ReviewTime'] <= end)]
 if rating_range:
     rmin, rmax = rating_range
-    filtered = filtered[(filtered['overall'] >= rmin) & (filtered['overall'] <= rmax)]
+    filtered = filtered[(filtered['Rating'] >= rmin) & (filtered['Rating'] <= rmax)]
 if selected_brands:
     filtered = filtered[filtered['brand'].isin(selected_brands)]
 if keyword:
     kw = keyword.lower()
     mask = False
-    if 'reviewText' in filtered.columns:
-        mask = mask | filtered['reviewText'].fillna('').str.lower().str.contains(kw)
-    if 'summary' in filtered.columns:
-        mask = mask | filtered['summary'].fillna('').str.lower().str.contains(kw)
+    if 'Review' in filtered.columns:
+        mask = mask | filtered['Review'].fillna('').str.lower().str.contains(kw)
+    if 'Summary' in filtered.columns:
+        mask = mask | filtered['Summary'].fillna('').str.lower().str.contains(kw)
     filtered = filtered[mask]
 
 # Derive simple category if not present (placeholder) for distribution
@@ -120,7 +123,7 @@ st.markdown(
 )
 
 # --- High level KPIs ---
-avg_rating = filtered['overall'].mean() if not filtered.empty else 0
+avg_rating = filtered['Rating'].mean() if not filtered.empty else 0
 sentiment_score = round((avg_rating/5)*10,1)
 volume = len(filtered)
 prev_volume = max(volume - int(volume*0.111), 1)  # placeholder for delta
@@ -166,22 +169,22 @@ with dash_tab:
     # Trend Area Chart
     st.markdown("### 📈 Historical Sentiment Trend")
     st.caption("Beauty product sentiment over time")
-    if 'reviewTime' in filtered.columns and filtered['reviewTime'].notna().sum()>0:
-        trend_df = filtered.dropna(subset=['reviewTime']).copy()
+    if 'ReviewTime' in filtered.columns and filtered['ReviewTime'].notna().sum()>0:
+        trend_df = filtered.dropna(subset=['ReviewTime']).copy()
         if period_choice == 'Monthly':
-            grp = trend_df['reviewTime'].dt.to_period('M')
+            grp = trend_df['ReviewTime'].dt.to_period('M')
         else:
-            grp = trend_df['reviewTime'].dt.to_period('Y')
-        trend_df = trend_df.groupby(grp)['overall'].mean().reset_index()
-        trend_df['period'] = trend_df['reviewTime'].dt.to_timestamp()
-        y = trend_df['overall'].values
+            grp = trend_df['ReviewTime'].dt.to_period('Y')
+        trend_df = trend_df.groupby(grp)['Rating'].mean().reset_index()
+        trend_df['period'] = trend_df['ReviewTime'].dt.to_timestamp()
+        y = trend_df['Rating'].values
         if sigma>0 and len(y)>1:
             try: smoothed = gaussian_filter1d(y, sigma=sigma)
             except Exception: smoothed = y
         else: smoothed = y
         fig, ax = plt.subplots(figsize=(6.5,3.2))
         ax.fill_between(trend_df['period'], smoothed, color='#ff5bbd22')
-        ax.plot(trend_df['period'], smoothed, color='#ff2d9b', linewidth=2)
+        ax.plot(trend_df['period'], smoothed, color="#ea489c", linewidth=2)
         ax.set_ylim(0,5)
         ax.set_ylabel('Avg Rating')
         ax.set_xlabel('Date')
@@ -213,13 +216,13 @@ with dash_tab:
         ('Value for Money','value')
     ]
     topic_cards = []
-    base_mean = filtered['overall'].mean() if not filtered.empty else 0
+    base_mean = filtered['Rating'].mean() if not filtered.empty else 0
     for label, kw in topics:
         if 'reviewText' in filtered.columns:
             subset = filtered[filtered['reviewText'].str.contains(kw, case=False, na=False)]
         else:
             subset = pd.DataFrame()
-        score = subset['overall'].mean() if not subset.empty else base_mean
+        score = subset['Rating'].mean() if not subset.empty else base_mean
         count = len(subset)
         quality_tag = 'Excellent' if score>=4.2 else ('Good' if score>=3.5 else 'Fair')
         topic_cards.append({"label":label,"score":round((score/5)*10,1),"count":count,"tag":quality_tag})
@@ -278,16 +281,16 @@ with dash_tab:
         st.markdown("**Urgent Beauty Issues Queue**")
         st.caption("Critical beauty product issues requiring immediate attention")
         issues = [
-            {"customer":"Sarah M.","asin":"B08XYZ123","summary":"Severe allergic reaction - skin rash and irritation","severity":"Critical","tags":["allergic reaction","rash","irritation"],"ago":"45 min"},
-            {"customer":"Jessica L.","asin":"B09ABC456","summary":"Wrong shade delivered - completely different color","severity":"High","tags":["wrong shade","color mismatch"],"ago":"2h"},
-            {"customer":"Amanda K.","asin":"B07DEF789","summary":"Product expired before delivery date","severity":"High","tags":["expired","quality issue"],"ago":"4h"},
+            {"customer":"Sarah M.","ASIN":"B08XYZ123","summary":"Severe allergic reaction - skin rash and irritation","severity":"Critical","tags":["allergic reaction","rash","irritation"],"ago":"45 min"},
+            {"customer":"Jessica L.","ASIN":"B09ABC456","summary":"Wrong shade delivered - completely different color","severity":"High","tags":["wrong shade","color mismatch"],"ago":"2h"},
+            {"customer":"Amanda K.","ASIN":"B07DEF789","summary":"Product expired before delivery date","severity":"High","tags":["expired","quality issue"],"ago":"4h"},
         ]
         for iss in issues:
             sev_class = 'severity-critical' if iss['severity']=="Critical" else 'severity-high'
             st.markdown(f"""
             <div class='issue-item'>
               <div style='display:flex; justify-content:space-between;'><strong>{iss['customer']}</strong><span class='{sev_class}'>{iss['severity']}</span></div>
-              <div style='font-size:0.65rem; opacity:0.8;'>{iss['asin']} • {iss['ago']} ago</div>
+              <div style='font-size:0.65rem; opacity:0.8;'>{iss['ASIN']} • {iss['ago']} ago</div>
               <div style='font-size:0.75rem; margin-top:4px;'>{iss['summary']}</div>
               <div>{''.join(f'<span class="pill">{t}</span>' for t in iss['tags'])}</div>
             </div>
@@ -318,10 +321,10 @@ with data_tab:
     st.subheader("Interactive Table View")
     # Column configuration (fix 'verified' typo)
     config = {
-        "imageURLHighRes": st.column_config.ImageColumn(label="Image"),
-        "verified": st.column_config.CheckboxColumn(label="Verified"),
-        "overall": st.column_config.NumberColumn(label="Rating", help="1–5 stars"),
-        # "reviewTime": st.column_config.DateColumn(label="Review Date"),
+        "ImageURL": st.column_config.ImageColumn(label="Image"),
+        "Verified": st.column_config.CheckboxColumn(label="Verified"),
+        "Rating": st.column_config.NumberColumn(label="Rating", help="1–5 stars"),
+        # "ReviewTime": st.column_config.DateColumn(label="Review Date"),
         "reviewText": st.column_config.TextColumn(label="Review Text"),
     }
     view_df = filtered.copy()
@@ -332,15 +335,15 @@ with data_tab:
     st.caption(f"Rows: {len(view_df):,} (Filtered from {len(df):,})")
 
     st.subheader("📈 Sentiment Trend (Detailed)")
-    if 'reviewTime' in filtered.columns and filtered['reviewTime'].notna().sum()>0:
-        trend_df2 = filtered.dropna(subset=['reviewTime']).copy()
+    if 'ReviewTime' in filtered.columns and filtered['ReviewTime'].notna().sum()>0:
+        trend_df2 = filtered.dropna(subset=['ReviewTime']).copy()
         if period_choice == 'Monthly':
-            grp = trend_df2['reviewTime'].dt.to_period('M')
+            grp = trend_df2['ReviewTime'].dt.to_period('M')
         else:
-            grp = trend_df2['reviewTime'].dt.to_period('Y')
-        trend_df2 = trend_df2.groupby(grp)['overall'].mean().reset_index()
-        trend_df2['period'] = trend_df2['reviewTime'].dt.to_timestamp()
-        y2 = trend_df2['overall'].values
+            grp = trend_df2['ReviewTime'].dt.to_period('Y')
+        trend_df2 = trend_df2.groupby(grp)['Rating'].mean().reset_index()
+        trend_df2['period'] = trend_df2['ReviewTime'].dt.to_timestamp()
+        y2 = trend_df2['Rating'].values
         if sigma>0 and len(y2)>1:
             try: smoothed2 = gaussian_filter1d(y2, sigma=sigma)
             except Exception: smoothed2 = y2

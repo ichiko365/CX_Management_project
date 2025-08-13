@@ -3,6 +3,7 @@ import pandas as pd
 import json
 from scipy.ndimage import gaussian_filter1d
 import matplotlib.pyplot as plt
+import os
 
 # --- Sidebar: App title & data loading options ---
 st.sidebar.title("Amazon Reviews Explorer")
@@ -14,31 +15,34 @@ st.sidebar.title("Amazon Reviews Explorer")
 def load_data(path: str):
     return pd.read_csv(path)
 
-df = load_data('amazon_data_v2.csv')
+# change to current directory
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+df = load_data('../cx_dashboard/data/amazon_data_v5.csv')
 
-# Ensure reviewTime parsed early for filters
-if 'reviewTime' in df.columns:
-    df['reviewTime'] = pd.to_datetime(df['reviewTime'], errors='coerce')
+# Ensure ReviewTime is parsed as datetime
+if 'ReviewTime' in df.columns:
+    df['ReviewTime'] = pd.to_datetime(df['ReviewTime'], errors='coerce')
 
 # --- Sidebar: Filters ---
 with st.sidebar.expander("Filters", expanded=True):
     # Date range
-    if 'reviewTime' in df.columns:
-        min_date = df['reviewTime'].min()
-        max_date = df['reviewTime'].max()
+    if 'ReviewTime' in df.columns:
+        min_date = df['ReviewTime'].min()
+        max_date = df['ReviewTime'].max()
         date_range = st.date_input(
             "Review date range", 
-            value=(min_date.date() if pd.notnull(min_date) else None, max_date.date() if pd.notnull(max_date) else None),
-            min_value=min_date.date() if pd.notnull(min_date) else None,
-            max_value=max_date.date() if pd.notnull(max_date) else None
+            value=(min_date.date() if pd.notnull(min_date) and isinstance(min_date, pd.Timestamp) else None, 
+                   max_date.date() if pd.notnull(max_date) and isinstance(max_date, pd.Timestamp) else None),
+            min_value=min_date.date() if pd.notnull(min_date) and isinstance(min_date, pd.Timestamp) else None,
+            max_value=max_date.date() if pd.notnull(max_date) and isinstance(max_date, pd.Timestamp) else None
         )
     else:
         date_range = None
 
     # Rating range
-    if 'overall' in df.columns:
-        min_rating = float(df['overall'].min())
-        max_rating = float(df['overall'].max())
+    if 'Rating' in df.columns:
+        min_rating = float(df['Rating'].min())
+        max_rating = float(df['Rating'].max())
         rating_range = st.slider("Rating range", min_rating, max_rating, (min_rating, max_rating))
     else:
         rating_range = None
@@ -67,7 +71,7 @@ if date_range and isinstance(date_range, (list, tuple)) and len(date_range) == 2
     filtered = filtered[(filtered['reviewTime'] >= start) & (filtered['reviewTime'] <= end)]
 if rating_range:
     rmin, rmax = rating_range
-    filtered = filtered[(filtered['overall'] >= rmin) & (filtered['overall'] <= rmax)]
+    filtered = filtered[(filtered['Rating'] >= rmin) & (filtered['Rating'] <= rmax)]
 if selected_brands:
     filtered = filtered[filtered['brand'].isin(selected_brands)]
 if keyword:
@@ -120,7 +124,7 @@ st.markdown(
 )
 
 # --- High level KPIs ---
-avg_rating = filtered['overall'].mean() if not filtered.empty else 0
+avg_rating = filtered['Rating'].mean() if not filtered.empty else 0
 sentiment_score = round((avg_rating/5)*10,1)
 volume = len(filtered)
 prev_volume = max(volume - int(volume*0.111), 1)  # placeholder for delta
@@ -172,9 +176,9 @@ with dash_tab:
             grp = trend_df['reviewTime'].dt.to_period('M')
         else:
             grp = trend_df['reviewTime'].dt.to_period('Y')
-        trend_df = trend_df.groupby(grp)['overall'].mean().reset_index()
+        trend_df = trend_df.groupby(grp)['Rating'].mean().reset_index()
         trend_df['period'] = trend_df['reviewTime'].dt.to_timestamp()
-        y = trend_df['overall'].values
+        y = trend_df['Rating'].values
         if sigma>0 and len(y)>1:
             try: smoothed = gaussian_filter1d(y, sigma=sigma)
             except Exception: smoothed = y
@@ -213,13 +217,13 @@ with dash_tab:
         ('Value for Money','value')
     ]
     topic_cards = []
-    base_mean = filtered['overall'].mean() if not filtered.empty else 0
+    base_mean = filtered['Rating'].mean() if not filtered.empty else 0
     for label, kw in topics:
         if 'reviewText' in filtered.columns:
             subset = filtered[filtered['reviewText'].str.contains(kw, case=False, na=False)]
         else:
             subset = pd.DataFrame()
-        score = subset['overall'].mean() if not subset.empty else base_mean
+        score = subset['Rating'].mean() if not subset.empty else base_mean
         count = len(subset)
         quality_tag = 'Excellent' if score>=4.2 else ('Good' if score>=3.5 else 'Fair')
         topic_cards.append({"label":label,"score":round((score/5)*10,1),"count":count,"tag":quality_tag})
@@ -318,11 +322,10 @@ with data_tab:
     st.subheader("Interactive Table View")
     # Column configuration (fix 'verified' typo)
     config = {
-        "imageURLHighRes": st.column_config.ImageColumn(label="Image"),
-        "verified": st.column_config.CheckboxColumn(label="Verified"),
-        "overall": st.column_config.NumberColumn(label="Rating", help="1–5 stars"),
-        # "reviewTime": st.column_config.DateColumn(label="Review Date"),
-        "reviewText": st.column_config.TextColumn(label="Review Text"),
+        "ImageURL": st.column_config.ImageColumn(label="Image"),
+        "Verified": st.column_config.CheckboxColumn(label="Verified"),
+        "Rating": st.column_config.NumberColumn(label="Rating", help="1–5 stars"),
+        "ReviewText": st.column_config.TextColumn(label="Review Text"),
     }
     view_df = filtered.copy()
     if enable_edit:
@@ -338,9 +341,9 @@ with data_tab:
             grp = trend_df2['reviewTime'].dt.to_period('M')
         else:
             grp = trend_df2['reviewTime'].dt.to_period('Y')
-        trend_df2 = trend_df2.groupby(grp)['overall'].mean().reset_index()
+        trend_df2 = trend_df2.groupby(grp)['Rating'].mean().reset_index()
         trend_df2['period'] = trend_df2['reviewTime'].dt.to_timestamp()
-        y2 = trend_df2['overall'].values
+        y2 = trend_df2['Rating'].values
         if sigma>0 and len(y2)>1:
             try: smoothed2 = gaussian_filter1d(y2, sigma=sigma)
             except Exception: smoothed2 = y2

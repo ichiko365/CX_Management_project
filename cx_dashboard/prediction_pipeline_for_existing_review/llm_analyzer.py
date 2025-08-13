@@ -69,6 +69,7 @@ class LLMAnalysis:
                 analysis_dict['asin'] = review_data.get('asin')
                 analysis_dict['title'] = review_data.get('title')
                 analysis_dict['region'] = review_data.get('region')
+                analysis_dict['review_date'] = review_data.get('review_date')
                 analysis_results.append(analysis_dict)
 
         logger.info(f"Analysis complete. Generated {len(analysis_results)} results.")

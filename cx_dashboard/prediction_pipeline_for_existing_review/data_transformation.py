@@ -29,7 +29,7 @@ class DataTransformation:
             logger.info("Starting data transformation process...")
             
             # --- 1. Select all necessary columns (reviewTime removed) ---
-            required_columns = ['id', 'ASIN', 'Title', 'Review', 'Region']
+            required_columns = ['id', 'ASIN', 'Title', 'Review', 'Region', 'ReviewTime']
             if not all(col in df.columns for col in required_columns):
                 missing = [col for col in required_columns if col not in df.columns]
                 logger.error(f"Input DataFrame is missing required columns: {missing}")
@@ -42,7 +42,8 @@ class DataTransformation:
                 'Review': 'text',
                 'ASIN': 'asin',
                 'Title': 'title',
-                'Region': 'region'
+                'Region': 'region',
+                'ReviewTime': 'review_date'
             })
             
             # --- 3. Convert to list of dictionaries ---
