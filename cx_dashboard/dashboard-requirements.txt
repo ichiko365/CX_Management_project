@@ -13,3 +13,4 @@ tqdm
 from_root
 fastapi
 uvicorn
+langchain-google-genai
