@@ -8,9 +8,9 @@ class DashboardAnalysis(BaseModel):
     sentiment: str = Field(description="Overall sentiment: 'Positive', 'Negative', 'Neutral', or 'Mixed'.")
     
     summary: str = Field(description="A concise, single-sentence summary of the review, written from a neutral, third-person perspective.")
-    
+
     key_drivers: Dict[str, str] = Field(
-        default_factory=dict,
+        default_factory=dict, 
         description="A dictionary mapping beauty-related features to their sentiment ('Positive' or 'Negative'). E.g., {'Shade Accuracy': 'Negative'}"
     )
     

@@ -20,7 +20,7 @@ class LLMAnalysis:
     """
     Encapsulates the LLM analysis logic.
     """
-    def __init__(self, model_name: str = "llama3"):
+    def __init__(self, model_name: str = "deepseek-r1:8b"):
         """
         Initializes the LangChain chain once to be reused for all analyses.
         """

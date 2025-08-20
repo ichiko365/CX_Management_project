@@ -27,8 +27,8 @@ class LLMAnalysis:
         Initializes the LangChain chain, selecting the model based on the provider.
 
         Args:
-            provider (str): The LLM provider to use ('ollama' or 'gemini').
-            model_name (str): The specific model to use (e.g., 'llama3' or 'gemini-1.5-flash').
+            provider (str): The LLM provider to use ('ollama' or 'deepseek').
+            model_name (str): The specific model to use (e.g., 'llama3' or 'deepseek-r1:8b').
         """
         logger.info(f"Initializing LLM chain with provider: '{provider}', model: '{model_name}'")
         try:
@@ -41,7 +41,7 @@ class LLMAnalysis:
             # --- Select the model based on the provider ---
             if provider.lower() == 'ollama':
                 model = ChatOllama(model=model_name)
-            elif provider.lower() == 'gemini':
+            elif provider.lower() == 'deepseek':
                 # This will automatically use the GOOGLE_API_KEY from your .env file
                 # if not os.getenv("GOOGLE_API_KEY"):
                     # raise ValueError("GOOGLE_API_KEY not found in .env file.")

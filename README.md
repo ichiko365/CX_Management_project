@@ -43,50 +43,48 @@ source .venv/bin/activate  # zsh/bash on macOS/Linux
 
 2) Install dependencies
 
-If you have a consolidated requirements file, install from it. Otherwise, install the core runtime packages below:
+Install through requirements.txt if present:
 
 ```bash
-pip install streamlit fastapi uvicorn requests pydantic python-dotenv sqlalchemy psycopg2-binary
-# Optional (for nicer UI in the Hub/App)
-pip install streamlit-extras
-# For the client dashboard (if you maintain a separate list)
-pip install -r src/dashboard-requirements.txt  # optional if present
+pip install -r requirements.txt
+```
+Then, download Ollama and follow the installation instructions.
+> Then, download the model weights for your chosen LLM (e.g., "deepseek-r1:8b") and place them in the appropriate directory.
+to download `deepseek-r1:8b`, you can use the following command:
+```bash
+ollama pull deepseek-r1:8b
 ```
 
 3) Configure environment
 
-Create a `.env` at the project root if needed:
-
+### Create .env (format)
 ```env
-# Backend bind (optional; defaults are fine for local use)
-BACKEND_HOST=127.0.0.1
-BACKEND_PORT=8000
+DB_USER="postgres"
+DB_PASSWORD=""
+DB_HOST="localhost"
+DB_PORT="5432"
+DB_NAME=""
+# "cx_hackathon_db"
 
-# Database URL (example for PostgreSQL; adjust as needed)
-DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/cx_db
-
-# Any other keys your pipeline/components need
-# OPENAI_API_KEY=...
+# Results Database
+RESULT_DB_NAME=""
+# "cx_hackathon_results_db"
 ```
 
-You can also place sensitive values in Streamlit secrets if you prefer: `app/.streamlit/secrets.toml`.
+### For Streamlit
+You can also place sensitive values in Streamlit secrets if you prefer: `app/.streamlit/secrets.toml` and `src/dashboard_project/.streamlit/secrets.toml`.
 
----
+4) Run `run_pipeline.py` to start the review processing pipeline.
 
-## Run (Recommended): Streamlit Hub
+Here, you can monitor the processing of reviews and any potential issues, and put into the results database using LLMs.
+Here, you can change:
+        the batch size for processing reviews: line 30
+        the model name for LLM analysis: line 47
 
-Start the Hub; it will manage and link out to the apps.
+5) Final
+    - Now, everything is ready for the first run!
+    - You can `DashBoard_streamlit.py` to start the hub and navigate to the apps.
 
-```bash
-streamlit run DashBoard_streamlit.py
-```
-
-From the Hub you can:
-- Start/Restart the Customer App (review intake) and Client Dashboard (KPIs).
-- See basic health/port status and open apps in new tabs.
-- Optionally embed a live preview inside the Hub.
-
----
 
 ## Run apps directly (optional)
 
@@ -102,7 +100,7 @@ streamlit run src/dashboard_project/app.py
 
 Backend API only (usually not needed because the Customer App starts it):
 ```bash
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --reload
 ```
 
 Pipeline (can also be triggered from the Customer App UI):
@@ -117,14 +115,6 @@ python run_pipeline.py
 - Submit the form to insert into the database via the FastAPI backend.
 - The app batches pipeline runs (e.g., after every N reviews) and also provides a “Run Pipeline Now” button.
 - Check logs in `logs/` (e.g., `backend.log`, `pipeline.log`) using the expanders in the UI.
-
----
-
-## Troubleshooting
-- Port already in use: The apps try to find a free port automatically. If something collides, change `BACKEND_PORT` or the Streamlit UI ports, or stop other processes using those ports.
-- Backend not reachable: Wait a few seconds for startup. Check `logs/backend.log`. Ensure your `.env` is set and that your Python environment has all required packages.
-- Database connection errors: Verify `DATABASE_URL` is correct and the DB is reachable.
-- Missing extras: UI “extras” are optional; install `streamlit-extras` if you want enhanced cards/effects.
 
 ---
 

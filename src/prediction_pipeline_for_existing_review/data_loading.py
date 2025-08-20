@@ -46,7 +46,7 @@ def fetch_pending_reviews(engine: Engine, batch_size: int = 100) -> pd.DataFrame
     sql_query = f"""
         SELECT * FROM {table_name} 
         WHERE analysis_status = 'pending' 
-        LIMIT {batch_size};
+        LIMIT {batch_size+1};
     """
     
     try:
