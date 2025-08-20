@@ -125,8 +125,8 @@ smoothing_window = st.sidebar.slider(
     help="Rolling window size; 0 disables smoothing",
 )
 
-"""Tabs for Dashboard and Table"""
-tab_dashboard, tab_table = st.tabs(["Dashboard", "Table"])
+"""Tabs for Dashboard, Table and Add Data"""
+tab_dashboard, tab_table, tab_add = st.tabs(["Dashboard", "Table", "Add Data"])
 
 with tab_dashboard:
     # Header controls: period selection and Category filter (moved from sidebar)
@@ -227,7 +227,7 @@ with tab_dashboard:
     else:
         _arrow = "↑" if sent_delta >= 0 else "↓"
         _val = f"+{sent_delta:.1f}" if sent_delta >= 0 else f"{sent_delta:.1f}"
-        sent_delta_html = f"{_arrow} {_val} from last month"
+        sent_delta_html = f"{_arrow} {_val} from last period"
         sent_delta_cls = "kpi-sub" if sent_delta >= 0 else "kpi-sub neg"
 
     vol = k.get("review_volume", {}) or {}
@@ -239,7 +239,7 @@ with tab_dashboard:
     else:
         _varrow = "↑" if vol_delta >= 0 else "↓"
         _vval = f"+{vol_delta:.1f}%" if vol_delta >= 0 else f"{vol_delta:.1f}%"
-        vol_delta_html = f"{_varrow} {_vval} from last month"
+        vol_delta_html = f"{_varrow} {_vval} from last period"
         vol_delta_cls = "kpi-sub" if vol_delta >= 0 else "kpi-sub neg"
 
     urg = k.get("urgent_issues", {}) or {}
@@ -279,9 +279,9 @@ with tab_dashboard:
                 unsafe_allow_html=True,
         )
 
-    # Historical Sentiment Trend with optional smoothing
-    st.markdown("### Historical Sentiment Trend")
-    st.caption("Beauty product sentiment over time")
+    # Historical Sentiment Trend (left) and Region Map (right)
+    st.markdown("### Historical")
+    st.caption("Left: sentiment trend • Right: review density by region")
     trend_container = st.container()
     with trend_container:
         # Align trend data with the period selection when not using Review Date
@@ -294,37 +294,153 @@ with tab_dashboard:
                 mask = (dt >= start_current) & (dt <= end_current)
                 trend_source_df = filtered_df[mask]
 
-        trend_engine = KpiEngine(trend_source_df)
-        trend_fn = getattr(trend_engine, "sentiment_trend", None)
-        # Choose weekly for <=30 days, else monthly; review-date mode uses monthly
-        trend_freq = "M" if (use_review_date or period_days > 30) else "W"
-        trend_df = trend_fn(freq=trend_freq, smoothing_window=smoothing_window) if callable(trend_fn) else None
-        if trend_df is not None and not trend_df.empty:
-            try:
-                import matplotlib.pyplot as plt  # lazy import; optional dependency
-                import matplotlib.dates as mdates
-                fig, ax = plt.subplots(figsize=(7, 3.2))
-                ax.fill_between(trend_df["period"], trend_df["smoothed"], color="#ea489c22")
-                ax.plot(trend_df["period"], trend_df["smoothed"], color="#ea489c", linewidth=2)
-                ax.set_ylabel("Sentiment")
-                ax.set_xlabel("Date")
-                ax.set_ylim(0, 10)
-                # De-clutter ticks: weekly or monthly
-                if trend_freq == "W":
-                    ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
-                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
-                else:
-                    ax.xaxis.set_major_locator(mdates.MonthLocator())
-                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
-                fig.autofmt_xdate()
-                ax.grid(alpha=0.2)
-                st.pyplot(fig, use_container_width=True)
-            except Exception:
-                # Fallback to Streamlit built-in area chart if matplotlib unavailable
-                tdf = trend_df.set_index("period")["smoothed"]
-                st.area_chart(tdf)
-        else:
-            st.info("Not enough dated sentiment data to plot.")
+        left_col, right_col = st.columns(2)
+
+        # --- Left: transparent Altair area chart for better theme blending ---
+        with left_col:
+            trend_engine = KpiEngine(trend_source_df)
+            trend_fn = getattr(trend_engine, "sentiment_trend", None)
+            trend_freq = "M" if (use_review_date or period_days > 30) else "W"
+            trend_df = trend_fn(freq=trend_freq, smoothing_window=smoothing_window) if callable(trend_fn) else None
+            if trend_df is not None and not trend_df.empty:
+                try:
+                    import altair as alt  # lazy import
+                    # Ensure datetime type for Altair
+                    tdf = trend_df.copy()
+                    tdf["period"] = pd.to_datetime(tdf["period"], errors="coerce")
+
+                    base = alt.Chart(tdf).encode(
+                        x=alt.X("period:T", title="Date"),
+                        y=alt.Y("smoothed:Q", title="Sentiment", scale=alt.Scale(domain=[0, 10]))
+                    )
+                    area = base.mark_area(
+                        color=alt.Gradient(
+                            gradient="linear",
+                            stops=[
+                                alt.GradientStop(color="#ea489c33", offset=0),
+                                alt.GradientStop(color="#ea489c05", offset=1),
+                            ],
+                            x1=1, x2=1, y1=0, y2=1,
+                        )
+                    )
+                    line = base.mark_line(color="#ea489c", strokeWidth=2)
+                    chart = (area + line).properties(height=260).configure(
+                        background=None
+                    ).configure_axis(
+                        grid=True, gridOpacity=0.2, domain=False
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+                except Exception:
+                    # Fallback to Streamlit built-in area chart
+                    try:
+                        tdf = trend_df.set_index("period")["smoothed"]
+                        st.area_chart(tdf)
+                    except Exception:
+                        st.info("Not enough dated sentiment data to plot.")
+            else:
+                st.info("Not enough dated sentiment data to plot.")
+
+        # --- Right: India map for 5 cities with circle size by review count ---
+        with right_col:
+            df_map_src = trend_source_df if trend_source_df is not None else pd.DataFrame()
+            if df_map_src is not None and not df_map_src.empty and "region" in df_map_src.columns:
+                try:
+                    # Use Folium (Leaflet) so tiles render without Mapbox token
+                    import folium
+                    from streamlit_folium import st_folium
+
+                    def _norm(r: str) -> str:
+                        return str(r).strip().lower()
+
+                    # Canonical 5 cities and synonyms -> canonical key
+                    CANON = {
+                        "delhi": "delhi", "new delhi": "delhi",
+                        "mumbai": "mumbai", "bombay": "mumbai",
+                        "chennai": "chennai",
+                        "kolkata": "kolkata", "calcutta": "kolkata",
+                        "bengaluru": "bengaluru", "bangalore": "bengaluru",
+                    }
+                    CITY_COORDS = {
+                        "delhi": (28.6139, 77.2090),
+                        "mumbai": (19.0760, 72.8777),
+                        "chennai": (13.0827, 80.2707),
+                        "kolkata": (22.5726, 88.3639),
+                        "bengaluru": (12.9716, 77.5946),
+                    }
+
+                    # Map all region values to the 5 canonical cities
+                    mapped = df_map_src["region"].astype(str).apply(_norm).map(CANON).dropna()
+                    if mapped.empty:
+                        st.info("No supported cities found (Delhi, Mumbai, Chennai, Kolkata, Bengaluru).")
+                    else:
+                        counts = mapped.value_counts().rename_axis("city").reset_index(name="count")
+                        counts["lat"] = counts["city"].map(lambda c: CITY_COORDS[c][0])
+                        counts["lon"] = counts["city"].map(lambda c: CITY_COORDS[c][1])
+
+                        # Build map centered on India
+                        m = folium.Map(location=[22.9734, 78.6569], zoom_start=5, tiles="CartoDB Positron")
+
+                        # Scale radius by count (pixels). Keep minimum visible size.
+                        max_c = max(int(counts["count"].max()), 1)
+                        def _radius(c):
+                            base = 8
+                            return base + int(22 * (c / max_c))
+
+                        for _, row in counts.iterrows():
+                            folium.CircleMarker(
+                                location=(row["lat"], row["lon"]),
+                                radius=_radius(row["count"]),
+                                color="#6a00ff",
+                                weight=1,
+                                fill=True,
+                                fill_color="#d800b9",
+                                fill_opacity=0.6,
+                                tooltip=f"{row['city'].title()}: {int(row['count'])} reviews",
+                            ).add_to(m)
+
+                        st_folium(m, width=None, height=320)
+                except Exception:
+                    # Fallback to pydeck as a secondary option if folium isn't available
+                    try:
+                        import pydeck as pdk
+                        CANON = {
+                            "delhi": "delhi", "new delhi": "delhi",
+                            "mumbai": "mumbai", "bombay": "mumbai",
+                            "chennai": "chennai",
+                            "kolkata": "kolkata", "calcutta": "kolkata",
+                            "bengaluru": "bengaluru", "bangalore": "bengaluru",
+                        }
+                        CITY_COORDS = {
+                            "delhi": (28.6139, 77.2090),
+                            "mumbai": (19.0760, 72.8777),
+                            "chennai": (13.0827, 80.2707),
+                            "kolkata": (22.5726, 88.3639),
+                            "bengaluru": (12.9716, 77.5946),
+                        }
+                        mapped = df_map_src["region"].astype(str).str.lower().map(CANON).dropna()
+                        if mapped.empty:
+                            st.info("No supported cities found (Delhi, Mumbai, Chennai, Kolkata, Bengaluru).")
+                        else:
+                            counts = mapped.value_counts().rename_axis("city").reset_index(name="count")
+                            counts["latitude"] = counts["city"].map(lambda c: CITY_COORDS[c][0])
+                            counts["longitude"] = counts["city"].map(lambda c: CITY_COORDS[c][1])
+                            counts["radius"] = counts["count"].apply(lambda c: 25000 + int(140000 * (c / max(int(counts['count'].max()), 1))))
+
+                            view_state = pdk.ViewState(latitude=22.9734, longitude=78.6569, zoom=4.2)
+                            layer = pdk.Layer(
+                                "ScatterplotLayer",
+                                data=counts,
+                                get_position="[longitude, latitude]",
+                                get_color=[106, 0, 255, 180],
+                                get_radius="radius",
+                                pickable=True,
+                            )
+                            deck = pdk.Deck(layers=[layer], initial_view_state=view_state, map_style=None)
+                            st.pydeck_chart(deck, use_container_width=True)
+                    except Exception:
+                        st.info("Install folium or pydeck to see the map.")
+            else:
+                st.info("No region column available to map.")
 
     # Beauty Sentiment Drivers (computed in calculation.py)
     st.markdown("### Beauty Sentiment Drivers")
@@ -449,3 +565,29 @@ with tab_table:
         st.dataframe(filtered_df, hide_index=False)
     else:
         st.info("No data to display for the selected filters.")
+
+with tab_add:
+    st.subheader("Add New Review")
+    st.caption("Provide review details below. The Add button is currently non-functional.")
+
+    # Pull choices from computed filters (from calculation.py)
+    asin_opts = asin_choices if isinstance(asin_choices, list) else []
+    region_opts = region_choices if isinstance(region_choices, list) else []
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if asin_opts:
+            asin_val = st.selectbox("ASIN", options=asin_opts, index=0, key="add_asin")
+        else:
+            asin_val = st.selectbox("ASIN", options=asin_opts, key="add_asin")
+        title_val = st.text_input("Title", key="add_title")
+    with col2:
+        if region_opts:
+            region_val = st.selectbox("Region", options=region_opts, index=0, key="add_region")
+        else:
+            region_val = st.selectbox("Region", options=region_opts, key="add_region")
+
+    review_val = st.text_area("Review", height=140, key="add_review_text")
+
+    # Placeholder Add button (no action yet)
+    st.button("Add", type="primary", key="add_submit")

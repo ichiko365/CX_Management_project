@@ -1,16 +1,22 @@
 import logging
-
-# Import your logger package to run its configuration code
-from cx_dashboard.logger import logger as app_logger
+try:
+    # Import your logger package to run its configuration code (sets up handlers)
+    from src.logger import logger as app_logger
+except Exception:
+    # Fallback: basic config so we still see logs
+    logging.basicConfig(level=logging.INFO)
 
 # Get a logger for this specific main script
 log = logging.getLogger(__name__)
 
 # Import all your pipeline components
-from cx_dashboard.prediction_pipeline_for_existing_review.data_loading import create_db_engine, fetch_pending_reviews
-from cx_dashboard.prediction_pipeline_for_existing_review.data_transformation import DataTransformation
-from cx_dashboard.prediction_pipeline_for_existing_review.llm_analyzer import LLMAnalysis
-from cx_dashboard.prediction_pipeline_for_existing_review.datasaver import DataSaver
+from src.prediction_pipeline_for_existing_review.data_loading import (
+    create_db_engine,
+    fetch_pending_reviews,
+)
+from src.prediction_pipeline_for_existing_review.data_transformation import DataTransformation
+from src.prediction_pipeline_for_existing_review.llm_analyzer import LLMAnalysis
+from src.prediction_pipeline_for_existing_review.datasaver import DataSaver
 
 def main():
     log.info("--- Starting Prediction Pipeline ---")
@@ -21,7 +27,7 @@ def main():
     if not db_engine:
         log.error("Aborting pipeline due to database connection failure."); return
 
-    pending_df = fetch_pending_reviews(engine=db_engine, batch_size=20)
+    pending_df = fetch_pending_reviews(engine=db_engine, batch_size=2)
     if pending_df.empty:
         log.info("No pending reviews found. Exiting pipeline."); return
     log.info(f"Stage 1 complete. Fetched {len(pending_df)} reviews.")

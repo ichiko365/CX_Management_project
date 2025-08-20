@@ -47,7 +47,7 @@ class DataSaver:
             original_review_id INTEGER NOT NULL UNIQUE,
             asin VARCHAR(20),
             title TEXT,
-            region VARCHAR(10),
+            region VARCHAR(20),
             sentiment VARCHAR(20),
             summary TEXT,
             key_drivers JSONB,

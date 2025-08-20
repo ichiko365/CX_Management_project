@@ -5,7 +5,7 @@ import os
 from sklearn.metrics import accuracy_score, classification_report
 
 # 1. Import your custom logger setup.
-from cx_dashboard.logger import logger 
+# from logger import logger 
 log = logging.getLogger(__name__)
 
 def evaluate_models():

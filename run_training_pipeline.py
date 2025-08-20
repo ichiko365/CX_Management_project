@@ -9,12 +9,12 @@ from dotenv import load_dotenv # --- NEW ---
 load_dotenv(override=True) # --- NEW ---
 
 # 2. Import your custom logger setup.
-from cx_dashboard.logger import logger 
+from src.logger import logger 
 
 # 3. Import the components
-from cx_dashboard.evaluating_llm.data_loading import load_data_from_csv
-from cx_dashboard.evaluating_llm.data_transformation import DataTransformation
-from cx_dashboard.evaluating_llm.llm_analyzer import LLMAnalysis
+from src.evaluating_llm.data_loading import load_data_from_csv
+from src.evaluating_llm.data_transformation import DataTransformation
+from src.evaluating_llm.llm_analyzer import LLMAnalysis
 
 # 4. Get a logger instance for this specific script
 log = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ def main():
     # === STAGE 1: LOAD & TRANSFORM TRAINING DATA ===
     try:
         train_set_path = os.path.join(from_root(),"cx_dashboard", "data", "train_set.csv")
-        train_df = pd.read_csv(train_set_path)
+        train_df = pd.read_csv(train_set_path).head(5)
         log.info(f"Loaded training set with {len(train_df)} reviews.")
     except FileNotFoundError:
         log.error(f"'{train_set_path}' not found. Please run data preparation pipeline first.")
@@ -44,7 +44,7 @@ def main():
 
     # === STAGE 3: RUN ANALYSIS WITH GEMINI ===
     log.info("--- Analyzing with Gemini ---")
-    gemini_analyzer = LLMAnalysis(provider="gemini", model_name="gemini-2.5-flash")
+    gemini_analyzer = LLMAnalysis(provider="gemini", model_name='deepseek-r1:8b')
     gemini_results = gemini_analyzer.run_analysis_on_list(llm_ready_training_data)
 
     # === STAGE 4: MERGE AND SAVE COMPARISON RESULTS ===
