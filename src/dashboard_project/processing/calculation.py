@@ -389,11 +389,11 @@ class KpiEngine:
 		dfc = self.df[cur_mask].copy()
 
 		urgency = pd.to_numeric(dfc.get("urgency_score", pd.Series(index=dfc.index)), errors="coerce")
-		tags = dfc.get("issue_tags", pd.Series(index=dfc.index)).apply(self._parse_issue_tags)
 
-		has_urgency = urgency.fillna(0) >= float(urgent_threshold)
-		has_tags = tags.apply(lambda lst: isinstance(lst, list) and len(lst) > 0)
-		urgent_mask = has_urgency | has_tags
+		# Updated rule (per product requirements):
+		# Urgent issues are defined ONLY by urgency_score >= urgent_threshold.
+		# Do not include issue_tags presence in the urgent determination.
+		urgent_mask = urgency.fillna(0) >= float(urgent_threshold)
 
 		total = int(urgent_mask.sum())
 

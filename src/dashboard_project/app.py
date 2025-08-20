@@ -4,12 +4,13 @@ import pandas as pd
 from database.queries import fetch_table, fetch_count
 from processing.calculation import get_filter_options, apply_filters, KpiEngine
 
+st.set_page_config(layout="wide")
 
 # THEME: Set colors for background and title gradient — change these to adjust look
-bg_start = "#fff0f6"   # light pink start (background)
-bg_end = "#f7f4ff"     # very light purple end (background)
-title_start = "#d800b9"  # vibrant pink (title gradient start)
-title_end = "#6a00ff"    # purple (title gradient end)
+bg_start = "#e5fbff"   #  (background)
+bg_end = "#fdfde9"     # (background)
+title_start = "#d37fe3"  # vibrant pink (title gradient start)
+title_end = "#008ae4"    # purple (title gradient end)
 
 # THEME: Page background gradient injected via CSS
 st.markdown(
@@ -17,7 +18,7 @@ st.markdown(
         <style>
         /* THEME: Page background gradient — edit bg_start/bg_end above */
         [data-testid="stAppViewContainer"] {{
-            background: linear-gradient(180deg, {bg_start} 0%, {bg_end} 100%) !important;
+            background: linear-gradient(90deg, {bg_start} 0%, {bg_end} 100%) !important;
         }}
         /* Make header transparent to let gradient show through */
         [data-testid="stHeader"] {{ background: transparent; }}
@@ -29,7 +30,7 @@ st.markdown(
 # THEME: Gradient Dashboard title — edit title_start/title_end above
 st.markdown(
         f"""
-        <h1 style="margin:0 0 0.25rem 0; background:linear-gradient(90deg, {title_start}, {title_end}); -webkit-background-clip:text; background-clip:text; color:transparent;">
+        <h1 style="margin:0 0 0.75rem 0; text-align:center; font-size:4.4rem; font-weight:800; line-height:1.2; background:linear-gradient(90deg, {title_start}, {title_end}); -webkit-background-clip:text; background-clip:text; color:transparent;">
             Beauty CX Dashboard
         </h1>
         """,
@@ -62,10 +63,18 @@ if st.button("Refresh data", type="primary", help="Clear cached results and relo
 df = fetch_table("analysis_results")
 filters = get_filter_options(df)
 
+# Note: Navigation will be handled via st.Page/st.navigation below (with emoji icons).
+
 """Sidebar filters (except Category which is shown in Dashboard header)."""
 st.sidebar.header("Filters")
-asin_choices = filters.get("asin", [])
-selected_asins = st.sidebar.multiselect("ASIN", options=asin_choices, default=[])
+# Replace ASIN with Title filter
+title_choices = filters.get("title")
+if (not title_choices) and isinstance(df, pd.DataFrame) and ("title" in df.columns):
+    try:
+        title_choices = sorted([t for t in df["title"].dropna().unique().tolist() if str(t).strip()])
+    except Exception:
+        title_choices = []
+selected_titles = st.sidebar.multiselect("Title", options=title_choices or [], default=[])
 
 # Additional categorical filters
 region_choices = filters.get("region", [])
@@ -125,10 +134,7 @@ smoothing_window = st.sidebar.slider(
     help="Rolling window size; 0 disables smoothing",
 )
 
-"""Tabs for Dashboard, Table and Add Data"""
-tab_dashboard, tab_table, tab_add = st.tabs(["Dashboard", "Table", "Add Data"])
-
-with tab_dashboard:
+def _dashboard_page():
     # Header controls: period selection and Category filter (moved from sidebar)
     left, mid, right = st.columns([1, 1, 2])
     with left:
@@ -146,12 +152,18 @@ with tab_dashboard:
             help="Filter by primary category",
         )
 
-    # Apply filters (including Category from header)
+    # Apply filters (including Category from header). Prefilter by Title and drop ASIN filter.
+    base_df = df
+    if selected_titles:
+        try:
+            base_df = base_df[base_df["title"].isin(selected_titles)]
+        except Exception:
+            pass
     use_review_date = period_label == "Use Review Date"
     effective_review_date_range = review_date_range if use_review_date else None
     filtered_df = apply_filters(
-        df,
-        asin_values=selected_asins,
+        base_df,
+        asin_values=[],
         region_values=selected_regions,
         sentiment_values=selected_sentiments,
         primary_category_values=selected_primary_categories,
@@ -178,13 +190,10 @@ with tab_dashboard:
         # Review volume (overall)
         vol_overall = int(len(filtered_df)) if filtered_df is not None else 0
 
-        # Urgent issues (overall) – reuse KpiEngine parsing logic
+        # Urgent issues (overall) – based only on urgency_score thresholds
         if filtered_df is not None and not filtered_df.empty:
             urgency = pd.to_numeric(filtered_df.get("urgency_score", pd.Series(index=filtered_df.index)), errors="coerce")
-            tags = filtered_df.get("issue_tags", pd.Series(index=filtered_df.index)).apply(KpiEngine._parse_issue_tags)
             urgent_mask = urgency.fillna(0) >= 3
-            has_tags = tags.apply(lambda lst: isinstance(lst, list) and len(lst) > 0)
-            urgent_mask = urgent_mask | has_tags
             total_u = int(urgent_mask.sum())
             critical_u = int((urgency >= 5).fillna(False).sum())
             high_u = int(((urgency >= 4) & (urgency < 5)).fillna(False).sum())
@@ -200,17 +209,36 @@ with tab_dashboard:
     else:
         k = kpi_engine.compute_all(days=period_days)
 
-    # Light CSS for gradient cards inspired by your template
+    # KPI CSS: soft blue background + gauge styles
     st.markdown(
         """
         <style>
-        .metric-grid {display:grid; gap:1rem; grid-template-columns:repeat(4, minmax(200px, 1fr));}
-        .card {background:#ffffff; border:1px solid #eee; border-radius:14px; padding:1rem 1.1rem; box-shadow:0 2px 4px rgba(0,0,0,0.04);} 
-        .card.soft {background:linear-gradient(135deg,#fff,#f9f6ff);} 
+    .metric-grid {display:grid; gap:1rem; grid-template-columns:repeat(4, minmax(200px, 1fr)); align-items:stretch; --kpi-card-h: 210px;}
+        .card {background:#ffffff; border:1px solid #dbe6ff; border-radius:16px; padding:1rem 1.1rem; box-shadow:0 2px 8px rgba(30,64,175,0.08); min-height:var(--kpi-card-h); height:var(--kpi-card-h); display:flex; flex-direction:column;}
+        .card.soft {background:linear-gradient(180deg,#eaf1ff,#edf2ff);} 
         .kpi-value {font-size:1.9rem; font-weight:700; margin:0.1rem 0;}
-        .kpi-sub {font-size:0.75rem; color:#0c8f3d; font-weight:500; margin-top:2px;}
+        .kpi-sub {font-size:0.8rem; color:#0c8f3d; font-weight:600; margin-top:2px;}
         .kpi-sub.neg {color:#c22727;}
-    .kpi-badge {background:#f1f5f9; padding:2px 7px; border-radius:20px; font-size:0.65rem; margin-left:6px;}
+    .kpi-badge {background:#e7ecff; padding:2px 7px; border-radius:20px; font-size:0.7rem; margin-left:6px;}
+    /* Centered number card variant */
+    .card.center {position:relative; align-items:center; justify-content:center; text-align:center;}
+    .card.center > div:first-child {position:absolute; top:10px; left:12px; font-weight:600; font-size:0.9rem; color:#334155; opacity:0.9;}
+    .card.center .kpi-value {font-size:6.2rem; line-height:1; margin:0;}
+    .card.center .kpi-sub {position:absolute; bottom:10px; left:12px; right:12px; text-align:center;}
+    /* Tinted badges for Urgent Issues */
+    .badge {display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:8px 10px; border-radius:10px; border:1px solid transparent;}
+    .badge-critical {background:#ffe8e8; border-color:#ffc9c9; color:#b91c1c;}
+    .badge-high {background:#fff4e5; border-color:#ffe1b4; color:#92400e;}
+        /* Gauge card */
+        .kpi-gauge-card {position:relative; background:linear-gradient(180deg,#eaf1ff,#edf2ff); border:1px solid #dbe6ff; border-radius:16px; padding:1rem 1.1rem; box-shadow:0 2px 8px rgba(30,64,175,0.08); min-height:var(--kpi-card-h); height:var(--kpi-card-h);} 
+        .kpi-pill {position:absolute; top:10px; right:12px; background:#e6e6ff; color:#111827; font-weight:800; padding:4px 10px; border-radius:14px; font-size:0.95rem;}
+    .gauge-wrap {position:relative; width:100%; height:100px;}
+        .gauge {position:absolute; left:0; right:0; top:0; bottom:0; display:flex; align-items:center; justify-content:center;}
+        .gauge svg {width:100%; height:100%;}
+    .gauge-center {position:absolute; left:0; right:0; top:36px; text-align:center;}
+        .gauge-emoji {font-size:44px; line-height:44px;}
+        .gauge-status {font-size:0.95rem; font-weight:700; margin-top:6px;}
+    .gauge-labels {display:flex; justify-content:space-between; font-weight:700; margin-top:7px;}
         </style>
         """,
         unsafe_allow_html=True,
@@ -243,41 +271,93 @@ with tab_dashboard:
         vol_delta_cls = "kpi-sub" if vol_delta >= 0 else "kpi-sub neg"
 
     urg = k.get("urgent_issues", {}) or {}
-    total_urg = urg.get("total", 0)
-    crit = urg.get("critical", 0)
-    high = urg.get("high", 0)
+    total_urg = int(urg.get("total", 0) or 0)
+    crit = int(urg.get("critical", 0) or 0)
+    high = int(urg.get("high", 0) or 0)
 
     team_val = k.get("team_utilization")
     team_val_html = f"{team_val:.0f}%" if team_val else "—"
     team_delta_html = ""  # no change to logic; leave blank if not available
 
-    st.markdown(
-            f"""
-            <div class='metric-grid'>
-                <div class='card soft'>
-                    <div>Sentiment Score <span class='kpi-badge'>/10</span></div>
-                    <p class='kpi-value'>{sent_val_html}</p>
-                    <div class='{sent_delta_cls}'>{sent_delta_html}</div>
-                </div>
-                <div class='card soft'>
-                    <div>Review Volume</div>
-                    <p class='kpi-value'>{vol_count:,}</p>
-                    <div class='{vol_delta_cls}'>{vol_delta_html}</div>
-                </div>
-                <div class='card soft'>
-                    <div>Urgent Issues</div>
-                    <p class='kpi-value'>{total_urg}</p>
-                    <div class='kpi-sub'>{crit} critical, {high} high</div>
-                </div>
-                <div class='card soft'>
-                    <div>Team Utilization</div>
-                    <p class='kpi-value'>{team_val_html}</p>
-                    <div class='kpi-sub'>{team_delta_html}</div>
-                </div>
-            </div>
-                """,
-                unsafe_allow_html=True,
-        )
+    # Build gauge KPI for Sentiment Average (normalize 0..10 -> -1..1)
+    _norm = None
+    if sent_score is not None:
+        try:
+            _norm = max(-1.0, min(1.0, (float(sent_score) - 5.0) / 5.0))
+        except Exception:
+            _norm = None
+    _percent = ((_norm + 1) / 2) if _norm is not None else None
+    _offset = (100.0 * (1.0 - _percent)) if _percent is not None else 100.0
+    if _norm is None:
+        _emoji, _status_text, _status_color, _pill_text = "❔", "—", "#64748b", "—"
+    else:
+        if _norm >= 0.25:
+            _emoji, _status_text, _status_color = "😄", "Positive", "#16a34a"
+        elif _norm <= -0.25:
+            _emoji, _status_text, _status_color = "😞", "Negative", "#dc2626"
+        else:
+            _emoji, _status_text, _status_color = "😐", "Neutral", "#64748b"
+        _pill_text = f"{_norm:.2f}"
+
+    # Build optional delta block for the gauge
+    sent_delta_block = (
+        f"<div class='{sent_delta_cls}' style='margin-top:6px;'>{sent_delta_html}</div>"
+        if sent_delta_html else ""
+    )
+
+    gauge_card_html = (
+        f"<div class='kpi-gauge-card'>"
+        f"<div style='font-weight:800;'>Sentiment Average</div>"
+        f"<div class='kpi-pill'>{_pill_text}</div>"
+        f"<div class='gauge-wrap'>"
+        f"<div class='gauge'>"
+        f"<svg viewBox='0 0 240 140'>"
+        f"<path d='M20 120 A 100 100 0 0 1 220 120' fill='none' stroke='#d9d6ff' stroke-width='14' stroke-linecap='round' pathLength='100' />"
+        f"<path d='M20 120 A 100 100 0 0 1 220 120' fill='none' stroke='#16a34a' stroke-width='14' stroke-linecap='round' pathLength='100' style='stroke-dasharray:100; stroke-dashoffset:{_offset};'/>"
+        f"</svg>"
+        f"</div>"
+        f"<div class='gauge-center'>"
+        f"<div class='gauge-emoji'>{_emoji}</div>"
+        f"<div class='gauge-status' style='color:{_status_color}'>{_status_text}</div>"
+        f"</div>"
+    f"</div>"
+    f"<div class='gauge-labels'><span>-1.00</span><span>1.00</span></div>"
+    f"{sent_delta_block}"
+        f"</div>"
+    )
+
+    # Construct KPI grid HTML without indent so Markdown doesn't treat as code
+    kpi_grid_html = (
+        "<div class='metric-grid'>"
+        f"{gauge_card_html}"
+    "<div class='card soft center'>"
+    "<div>Review Volume</div>"
+    f"<p class='kpi-value'>{vol_count:,}</p>"
+    f"<div class='{vol_delta_cls}'>{vol_delta_html}</div>"
+    "</div>"
+    "<div class='card soft' style='position:relative;'>"
+    "<div style='font-weight:800;'>Urgent Issues</div>"
+    f"<div class='kpi-pill' title='Urgency score ≥ 3'>{total_urg}</div>"
+    f"<div style='display:flex;flex-direction:column;gap:8px;margin-top:12px;'>"
+    f"<div class='badge badge-critical' style='height:70px; display:flex; flex-direction:row; align-items:center; justify-content:space-between; padding:10px 12px;'>"
+    f"<div style='font-size:1.3rem;font-weight:500;'>Critical</div>"
+    f"<div style='font-size:1.3rem;font-weight:500;'>{crit}</div>"
+    f"</div>"
+    f"<div class='badge badge-high' style='height:70px; display:flex; flex-direction:row; align-items:center; justify-content:space-between; padding:10px 12px;'>"
+    f"<div style='font-size:1.3rem;font-weight:500;'>High</div>"
+    f"<div style='font-size:1.3rem;font-weight:500;'>{high}</div>"
+    f"</div>"
+    f"</div>"
+    "</div>"
+        "<div class='card soft'>"
+        "<div>Team Utilization</div>"
+        f"<p class='kpi-value'>{team_val_html}</p>"
+        f"<div class='kpi-sub'>{team_delta_html}</div>"
+        "</div>"
+        "</div>"
+    )
+
+    st.markdown(kpi_grid_html, unsafe_allow_html=True)
 
     # Historical Sentiment Trend (left) and Region Map (right)
     st.markdown("### Historical")
@@ -296,7 +376,7 @@ with tab_dashboard:
 
         left_col, right_col = st.columns(2)
 
-        # --- Left: transparent Altair area chart for better theme blending ---
+    # --- Left: Altair area+line (blue palette) for better blending ---
         with left_col:
             trend_engine = KpiEngine(trend_source_df)
             trend_fn = getattr(trend_engine, "sentiment_trend", None)
@@ -317,18 +397,18 @@ with tab_dashboard:
                         color=alt.Gradient(
                             gradient="linear",
                             stops=[
-                                alt.GradientStop(color="#ea489c33", offset=0),
-                                alt.GradientStop(color="#ea489c05", offset=1),
+                                alt.GradientStop(color="#60a5fa33", offset=0),
+                                alt.GradientStop(color="#60a5fa05", offset=1),
                             ],
                             x1=1, x2=1, y1=0, y2=1,
                         )
                     )
-                    line = base.mark_line(color="#ea489c", strokeWidth=2)
+                    line = base.mark_line(color="#2563eb", strokeWidth=2)
                     chart = (area + line).properties(height=260).configure(
                         background=None
                     ).configure_axis(
-                        grid=True, gridOpacity=0.2, domain=False
-                    )
+                        grid=True, gridOpacity=0.2, domain=False, labelPadding=6, titlePadding=12
+                    ).configure_view(strokeWidth=0)
                     st.altair_chart(chart, use_container_width=True)
                 except Exception:
                     # Fallback to Streamlit built-in area chart
@@ -469,14 +549,14 @@ with tab_dashboard:
         items = items[:size]
         return items + [None] * (size - len(items))
 
-    # Minimal card CSS (green for positive, red for negative)
+    # Minimal card CSS (green for positive, red for negative) apart from that every thing should be same
     st.markdown(
         """
         <style>
         .driver-card {background:#f2fcf6; border:1px solid #d6f5e1; border-radius:12px; padding:0.9rem 1rem; min-height:90px;}
         .driver-card.blank {background:transparent; border:1px dashed #e8e8e8;}
-        .driver-card.neg {background:#ffc4c4; border:1px solid #ffd7d7;}
-        .driver-card.blank.neg {border-color:#ffd7d7;}
+        .driver-card.neg {background:#ffc4c4; border:1px solid #ffd7d7; border-radius:12px; padding:0.9rem 1rem; min-height:90px;}
+        .driver-card.blank.neg {background:transparent; border:1px dashed #ffd7d7;}
         .driver-title {font-weight:600; margin-bottom:0.4rem;}
         .driver-meta {font-size:0.75rem; opacity:0.9;}
         </style>
@@ -502,12 +582,13 @@ with tab_dashboard:
                         st.markdown(
                             f"""
                             <div class='{klass}'>
-                              <div class='driver-title'>{title}</div>
-                              <div class='driver-meta'>{subtitle} <span style='float:right;font-weight:600'>{cnt}</span></div>
+                            <div class='driver-title'>{title}</div>
+                            <div class='driver-meta'>{subtitle} <span style='float:right;font-weight:600'>{cnt}</span></div>
                             </div>
                             """,
                             unsafe_allow_html=True,
                         )
+
 
     p_tabs = st.tabs(["Positive Drivers", "Negative Drivers"])
     with p_tabs[0]:
@@ -557,37 +638,43 @@ with tab_dashboard:
     else:
         st.caption(f"Total rows in table: {count:,}")
 
-with tab_table:
+def _table_page():
     st.subheader("Analysis Results")
     st.write("Displaying data from the analysis_results table (filtered):")
-    # Reuse filtered_df from Dashboard tab (computed with header Category)
-    if 'filtered_df' in locals() and filtered_df is not None and not filtered_df.empty:
-        st.dataframe(filtered_df, hide_index=False)
+    # Compute filtered_df for Table page using sidebar filters and stored Category
+    base_df = df
+    if 'selected_titles' in locals() and selected_titles:
+        try:
+            base_df = base_df[base_df["title"].isin(selected_titles)]
+        except Exception:
+            pass
+    selected_primary_categories = st.session_state.get("primary_category_top", [])
+    table_df = apply_filters(
+        base_df,
+        asin_values=[],
+        region_values=selected_regions,
+        sentiment_values=selected_sentiments,
+        primary_category_values=selected_primary_categories,
+        urgency_score_range=urgency_score_range,
+        review_date_range=review_date_range,  # use sidebar date range as-is on Table
+    )
+    if table_df is not None and not table_df.empty:
+        st.dataframe(table_df, hide_index=False)
     else:
         st.info("No data to display for the selected filters.")
 
-with tab_add:
-    st.subheader("Add New Review")
-    st.caption("Provide review details below. The Add button is currently non-functional.")
-
-    # Pull choices from computed filters (from calculation.py)
-    asin_opts = asin_choices if isinstance(asin_choices, list) else []
-    region_opts = region_choices if isinstance(region_choices, list) else []
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if asin_opts:
-            asin_val = st.selectbox("ASIN", options=asin_opts, index=0, key="add_asin")
-        else:
-            asin_val = st.selectbox("ASIN", options=asin_opts, key="add_asin")
-        title_val = st.text_input("Title", key="add_title")
-    with col2:
-        if region_opts:
-            region_val = st.selectbox("Region", options=region_opts, index=0, key="add_region")
-        else:
-            region_val = st.selectbox("Region", options=region_opts, key="add_region")
-
-    review_val = st.text_area("Review", height=140, key="add_review_text")
-
-    # Placeholder Add button (no action yet)
-    st.button("Add", type="primary", key="add_submit")
+# --- Navigation: st.Page API with emoji icons (fallback to radio if unavailable) ---
+if hasattr(st, "Page") and hasattr(st, "navigation"):
+    pages = [
+        st.Page(_dashboard_page, title="Dashboard", icon="📊"),
+        st.Page(_table_page, title="Table", icon="📋"),
+    ]
+    st.navigation(pages).run()
+else:
+    # Fallback to legacy sidebar radio if running on older Streamlit
+    st.sidebar.header("Navigation")
+    _page = st.sidebar.radio("Pages", ["Dashboard", "Table"], index=0)
+    if _page == "Dashboard":
+        _dashboard_page()
+    else:
+        _table_page()

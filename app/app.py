@@ -7,11 +7,70 @@ import subprocess
 from pathlib import Path
 
 import requests
+from urllib.parse import urlparse, parse_qs
 import streamlit as st
 
 
 # ----------------------- Page setup -----------------------
 st.set_page_config(page_title="CX Management", page_icon="💬", layout="wide")
+
+# ----------------------- Theme & styles -------------------
+st.markdown(
+	"""
+	<style>
+	.stApp {
+	  background: linear-gradient(135deg, #eef2ff 0%, #fff0f6 50%, #effdf6 100%);
+	}
+	.main-card { 
+	  background: rgba(255,255,255,0.78);
+	  border: 1px solid rgba(0,0,0,0.06);
+	  border-radius: 16px; 
+	  padding: 18px 18px 20px; 
+	  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+	}
+	.media-frame { 
+	  aspect-ratio: 16/9; 
+	  width: 100%; 
+	  border-radius: 16px; 
+	  overflow: hidden; 
+	  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+	  border: 1px solid rgba(0,0,0,0.06);
+	  background: #fff;
+	}
+	.media-frame img { width: 100%; height: 100%; object-fit: contain; object-position: center; display: block; }
+	.media-frame iframe { width: 100% !important; height: 100% !important; border: 0; display:block; }
+	</style>
+	""",
+	unsafe_allow_html=True,
+)
+
+# Optional: use streamlit-extras if present
+try:
+	from streamlit_extras.stylable_container import stylable_container
+except Exception:
+	stylable_container = None
+
+
+def youtube_embed(url: str) -> str:
+	"""Return an embeddable YouTube iframe for various URL formats."""
+	if not url:
+		return ""
+	parsed = urlparse(url)
+	vid = ""
+	if parsed.netloc in {"youtu.be"}:
+		vid = parsed.path.lstrip("/")
+	elif "youtube.com" in parsed.netloc:
+		if parsed.path == "/watch":
+			vid = parse_qs(parsed.query).get("v", [""])[0]
+		elif parsed.path.startswith("/embed/"):
+			vid = parsed.path.split("/")[-1]
+	if not vid:
+		return ""
+	return f"""
+	<div class=\"media-frame\">
+	  <iframe src=\"https://www.youtube.com/embed/{vid}?rel=0\" allowfullscreen></iframe>
+	</div>
+	"""
 
 
 # ----------------------- Config ---------------------------
@@ -151,15 +210,22 @@ if not backend_ok:
 # ----------------------- Header ---------------------------
 st.title("CX Management")
 
-left, right = st.columns([1, 1])
+left, right = st.columns(2, gap="large")
 with left:
-	st.image(
-		"https://res.retailershakti.com/incom/images/product/Lakme-Face-Sheer-Sun-Kissed-1602502094-10039240-2.jpg",
-		caption="Luminous Glow Serum",
-		use_container_width=True,
+	st.markdown(
+		'''
+		<div class="media-frame">
+		  <img src="https://res.retailershakti.com/incom/images/product/Lakme-Face-Sheer-Sun-Kissed-1602502094-10039240-2.jpg" alt="Luminous Glow Serum" />
+		</div>
+		''',
+		unsafe_allow_html=True,
 	)
 with right:
-	st.video("https://youtu.be/AvpPocRT3JU?si=HujZcx88Qm-Fs-f2")
+	html = youtube_embed("https://youtu.be/AvpPocRT3JU?si=HujZcx88Qm-Fs-f2")
+	if html:
+		st.markdown(html, unsafe_allow_html=True)
+	else:
+		st.video("https://youtu.be/AvpPocRT3JU?si=HujZcx88Qm-Fs-f2")
 
 st.markdown("---")
 
@@ -168,15 +234,19 @@ st.markdown("---")
 st.subheader("Add Customer Review")
 st.caption("Tip: Only ASIN and Review are required. Title and Description will auto-fill from the DB when possible.")
 
-with st.form("add_review_form", clear_on_submit=True):
-	asin = st.text_input("ASIN", placeholder="B002K6AHQY")
-	cols = st.columns([1, 1])
-	with cols[0]:
-		rating = st.slider("Ratings", 1, 5, 4)
-	with cols[1]:
-		st.number_input("Numeric Rating", min_value=1, max_value=5, value=4)
+container_ctx = stylable_container("review_form_card", css_styles="") if stylable_container else st.container()
 
-	region = st.selectbox(
+with container_ctx:
+	st.markdown('<div class="main-card">', unsafe_allow_html=True)
+	with st.form("add_review_form", clear_on_submit=True):
+		asin = st.text_input("ASIN", placeholder="B002K6AHQY")
+		cols = st.columns([1, 1])
+		with cols[0]:
+			rating = st.slider("Ratings", 1, 5, 4)
+		with cols[1]:
+			st.number_input("Numeric Rating", min_value=1, max_value=5, value=4)
+
+		region = st.selectbox(
 		"Region",
 		[
 			"Delhi",
@@ -188,11 +258,12 @@ with st.form("add_review_form", clear_on_submit=True):
 		],
 		index=0,
 	)
-	title = st.text_input("Review Title (optional)", placeholder="Great Product!")
-	description = st.text_area("Product Description (optional)", placeholder="Will auto-fill if known for this ASIN", height=80)
-	review_text = st.text_area("Review", placeholder="Tell us what you think…", height=120)
+		title = st.text_input("Review Title (optional)", placeholder="Great Product!")
+		description = st.text_area("Product Description (optional)", placeholder="Will auto-fill if known for this ASIN", height=80)
+		review_text = st.text_area("Review", placeholder="Tell us what you think…", height=120)
 
-	submitted = st.form_submit_button("Submit Review")
+		submitted = st.form_submit_button("Submit Review")
+	st.markdown('</div>', unsafe_allow_html=True)
 
 if submitted:
 	payload = {
