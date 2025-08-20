@@ -54,6 +54,7 @@ to download `deepseek-r1:8b`, you can use the following command:
 ```bash
 ollama pull deepseek-r1:8b
 ```
+Finally, Download PostgreSql
 
 3) Configure environment
 
