@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import Query
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
@@ -53,6 +54,44 @@ if engine is None:
 	raise RuntimeError("Database connection failed on startup")
 
 SessionLocal = sessionmaker(bind=engine)
+
+
+# ------------------------ Ensure PK sequence is healthy -------------------
+def _ensure_raw_reviews_id_sequence() -> None:
+	"""Ensure raw_reviews.id has a nextval() default and the sequence is aligned.
+
+	This repairs cases where the table was created without SERIAL or where the
+	sequence fell behind the max(id), causing UNIQUE violations on insert.
+	"""
+	try:
+		with engine.begin() as conn:  # begin() provides a txn and commits automatically
+			# Check current default on id
+			default_sql = text(
+				"""
+				SELECT column_default
+				FROM information_schema.columns
+				WHERE table_name = 'raw_reviews' AND column_name = 'id';
+				"""
+			)
+			current_default = conn.execute(default_sql).scalar()
+
+			# Create sequence if needed and set as default
+			conn.execute(text("CREATE SEQUENCE IF NOT EXISTS raw_reviews_id_seq;"))
+			conn.execute(text("ALTER SEQUENCE raw_reviews_id_seq OWNED BY raw_reviews.id;"))
+			if not current_default or "nextval(" not in str(current_default):
+				conn.execute(
+					text("ALTER TABLE raw_reviews ALTER COLUMN id SET DEFAULT nextval('raw_reviews_id_seq');")
+				)
+
+			# Align sequence with current MAX(id)
+			max_id = conn.execute(text("SELECT COALESCE(MAX(id), 0) FROM raw_reviews;")).scalar() or 0
+			conn.execute(text("SELECT setval('raw_reviews_id_seq', :val)").bindparams(val=int(max_id)))
+	except Exception as e:
+		log.warning("Could not ensure raw_reviews.id sequence: %s", e)
+
+
+# Attempt repair on startup
+_ensure_raw_reviews_id_sequence()
 
 
 # ------------------------ Pipeline trigger logic -------------------------
@@ -105,6 +144,51 @@ def _start_pipeline_process() -> None:
 
 
 # ------------------------------ Endpoints --------------------------------
+@app.get("/suggest_titles")
+def suggest_titles(q: str = Query(..., min_length=2), limit: int = Query(10, ge=1, le=25)):
+	"""Return up to `limit` title suggestions matching `q` (case-insensitive).
+	For each distinct Title, returns the most recent ASIN/Description.
+	"""
+	eng = engine  # use existing engine
+	try:
+		# For each Title, take the latest row (by id) and fall back to the latest non-null Description if needed
+		sql = text(
+			"""
+			WITH latest_per_title AS (
+			  SELECT DISTINCT ON ("Title") id, "Title", "ASIN", "Description"
+			  FROM raw_reviews
+			  WHERE "Title" ILIKE :q
+			  ORDER BY "Title", id DESC
+			)
+			SELECT l."Title",
+			       l."ASIN",
+			       COALESCE(l."Description", d."Description") AS "Description"
+			FROM latest_per_title l
+			LEFT JOIN LATERAL (
+			  SELECT "Description"
+			  FROM raw_reviews r2
+			  WHERE r2."Title" = l."Title" AND r2."Description" IS NOT NULL
+			  ORDER BY r2.id DESC
+			  LIMIT 1
+			) d ON true
+			LIMIT :limit;
+			"""
+		)
+		with eng.connect() as conn:
+			rows = conn.execute(sql, {"q": f"%{q}%", "limit": int(limit)}).mappings().all()
+		return [
+			{
+				"Title": r.get("Title"),
+				"ASIN": r.get("ASIN"),
+				"Description": r.get("Description"),
+			}
+			for r in rows
+			if r.get("Title")
+		]
+	except Exception as e:
+		log.error("suggest_titles failed: %s", e)
+		raise HTTPException(status_code=500, detail="Suggestion lookup failed")
+
 @app.post("/add_review/", response_model=ReviewDB, status_code=201)
 def add_review_to_queue(review: ReviewInput, background_tasks: BackgroundTasks):
 	global _new_reviews_counter

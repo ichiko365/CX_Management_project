@@ -142,6 +142,18 @@ def load_csv_to_postgres():
 
         print(f"✅ Success! {len(df)} rows inserted into '{table_name}'.")
 
+        # --- 7. Align the sequence with MAX(id) to avoid duplicate key on future inserts ---
+        try:
+            with engine.begin() as conn:
+                # Ensure sequence exists and is owned by the id column
+                conn.execute(text("CREATE SEQUENCE IF NOT EXISTS raw_reviews_id_seq;"))
+                conn.execute(text("ALTER SEQUENCE raw_reviews_id_seq OWNED BY raw_reviews.id;"))
+                conn.execute(text("ALTER TABLE raw_reviews ALTER COLUMN id SET DEFAULT nextval('raw_reviews_id_seq');"))
+                conn.execute(text("SELECT setval('raw_reviews_id_seq', COALESCE((SELECT MAX(id) FROM raw_reviews), 0));"))
+            print("🛠️ Sequence raw_reviews_id_seq aligned with MAX(id).")
+        except Exception as seq_err:
+            print(f"⚠️ Could not adjust sequence: {seq_err}")
+
     except FileNotFoundError:
         print(f"❌ Error: CSV file '{csv_file_path}' not found.")
     except Exception as e:
