@@ -216,3 +216,7 @@ __marimo__/
 # Python cache files (good practice)
 __pycache__/
 *.pyc
+
+# .gitignore
+app/RAGs/.chroma_catalog/
+app/RAGs/.chroma_qa/
