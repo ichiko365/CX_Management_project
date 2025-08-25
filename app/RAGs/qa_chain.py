@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import os
+import asyncio
 from functools import lru_cache
+import hashlib
 import re
 from pathlib import Path
 from typing import List, Optional, Tuple
+from sentence_transformers import SentenceTransformer
+import numpy as np
 
 try:
 	# Prefer the new package per LangChain 0.2.9+
@@ -41,43 +45,115 @@ def _embeddings():
 	# Keep model consistent with ingestion; force CPU to avoid MPS OOM on macOS
 	# return OpenAIEmbeddings(model="text-embedding-3-large")
 	return HuggingFaceEmbeddings(
-		# model_name="sentence-transformers/all-MiniLM-L6-v2",
-		model_name="Qwen/Qwen3-Embedding-0.6B",
-		model_kwargs={"device": "cpu"},
-		encode_kwargs={"batch_size": 16, "normalize_embeddings": True},
+		model_name="sentence-transformers/all-MiniLM-L6-v2",  # Faster, smaller model
+		# model_name="Qwen/Qwen3-Embedding-0.6B",
+		model_kwargs={"device": "mps"},  # Use CPU for stability
+		encode_kwargs={"batch_size": 1, "normalize_embeddings": True},  # Reduced batch size for speed
 	)
+
+# Smart caching with query similarity
+_SIMILARITY_CACHE = {}
+_SIMILARITY_MODEL = None
+
+def _get_similarity_model():
+	global _SIMILARITY_MODEL
+	if _SIMILARITY_MODEL is None:
+		_SIMILARITY_MODEL = SentenceTransformer('all-MiniLM-L6-v2')
+	return _SIMILARITY_MODEL
+
+def _get_similar_cached_query(query: str, threshold: float = 0.85) -> Optional[str]:
+	"""Check if query is similar to any cached query."""
+	if not _SIMILARITY_CACHE:
+		return None
+	
+	model = _get_similarity_model()
+	query_embedding = model.encode([query])
+	
+	for cached_query, cached_embedding in _SIMILARITY_CACHE.items():
+		similarity = np.dot(query_embedding[0], cached_embedding) / (
+			np.linalg.norm(query_embedding[0]) * np.linalg.norm(cached_embedding)
+		)
+		if similarity > threshold:
+			return cached_query
+	return None
+
+def _cache_query_embedding(query: str):
+	"""Cache query embedding for similarity matching."""
+	if len(_SIMILARITY_CACHE) > 100:  # Limit cache size
+		# Remove oldest entries
+		oldest_keys = list(_SIMILARITY_CACHE.keys())[:20]
+		for key in oldest_keys:
+			del _SIMILARITY_CACHE[key]
+	
+	model = _get_similarity_model()
+	embedding = model.encode([query])[0]
+	_SIMILARITY_CACHE[query] = embedding
 FAQ_DB_PATH = str(BASE_DIR / ".chroma_faqs")
 FAQS_JSON_PATH = MODULE_DIR.parent / "data" / "FAQs.json"
 
+# Keep Chroma connections alive instead of recreating
+_QA_DB_INSTANCE = None
+_CATALOG_DB_INSTANCE = None
+_FAQ_DB_INSTANCE = None
 
 @lru_cache(maxsize=1)
 def _qa_db() -> Chroma:
-	return Chroma(persist_directory=QA_DB_PATH, embedding_function=_embeddings())
-
+	global _QA_DB_INSTANCE
+	if _QA_DB_INSTANCE is None:
+		_QA_DB_INSTANCE = Chroma(persist_directory=QA_DB_PATH, embedding_function=_embeddings())
+	return _QA_DB_INSTANCE
 
 @lru_cache(maxsize=1)
 def _catalog_db() -> Chroma:
-	return Chroma(persist_directory=CATALOG_DB_PATH, embedding_function=_embeddings())
+	global _CATALOG_DB_INSTANCE
+	if _CATALOG_DB_INSTANCE is None:
+		_CATALOG_DB_INSTANCE = Chroma(persist_directory=CATALOG_DB_PATH, embedding_function=_embeddings())
+	return _CATALOG_DB_INSTANCE
 
 
 
 @lru_cache(maxsize=1)
 def _faq_db() -> Optional[Chroma]:
 	"""Load or build the FAQs vector store if data is available."""
+	global _FAQ_DB_INSTANCE
+	if _FAQ_DB_INSTANCE is not None:
+		return _FAQ_DB_INSTANCE
+		
 	try:
 		# If a persisted store exists, load it
 		if Path(FAQ_DB_PATH).exists():
-			return Chroma(persist_directory=FAQ_DB_PATH, embedding_function=_embeddings())
+			_FAQ_DB_INSTANCE = Chroma(persist_directory=FAQ_DB_PATH, embedding_function=_embeddings())
+			return _FAQ_DB_INSTANCE
 		# Else try to build from JSON if present
 		if FAQS_JSON_PATH.exists():
 			faqs = _load_faqs_json()
 			if faqs:
 				_build_faq_index(faqs)
-				return Chroma(persist_directory=FAQ_DB_PATH, embedding_function=_embeddings())
+				_FAQ_DB_INSTANCE = Chroma(persist_directory=FAQ_DB_PATH, embedding_function=_embeddings())
+				return _FAQ_DB_INSTANCE
 	except Exception:
 		pass
 	return None
 
+# Enhanced caching with similarity check
+@lru_cache(maxsize=100)  # Increased cache size
+def _cached_similarity_search(db_name: str, query: str, k: int = 4):
+	# Check for similar cached queries first
+	similar_query = _get_similar_cached_query(query)
+	if similar_query:
+		# Use cached result if available
+		cache_key = f"{db_name}:{similar_query}:{k}"
+		if hasattr(_cached_similarity_search, 'cache_info'):
+			# Use the similar query for cache lookup
+			return _cached_similarity_search(db_name, similar_query, k)
+	
+	# Cache the current query embedding for future similarity checks
+	_cache_query_embedding(query)
+	
+	if db_name == "qa":
+		return _qa_db().similarity_search(query, k=k)
+	elif db_name == "catalog":
+		return _catalog_db().similarity_search_with_score(query, k=k)
 
 def _load_faqs_json() -> List[dict]:
 	"""Load FAQs from JSON. Accepts list of {question, answer} or a dict of q->a."""
@@ -133,15 +209,22 @@ def get_faq_guidance(question: str, k: int = 3) -> str:
 	"""Public helper for agents/UI to fetch FAQ-style guidance for phrasing answers."""
 	return _retrieve_faq_guidance(question, k=k)
 
-def _llm() -> ChatOllama:
-	# Do not change user's model: allow override via env, fallback is safe
-	# model = os.getenv("OLLAMA_MODEL", "llama3")
-	return ChatOllama(model='llama3-groq-tool-use')
-
-# def _llm() -> ChatOpenAI:
+# def _llm() -> ChatOllama:
 # 	# Do not change user's model: allow override via env, fallback is safe
-# 	model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
-# 	return ChatOpenAI(model=model, temperature=0.2)
+# 	# model = os.getenv("OLLAMA_MODEL", "llama3")
+# 	return ChatOllama(model='llama3-groq-tool-use')
+
+def _llm() -> ChatOpenAI:
+	# Do not change user's model: allow override via env, fallback is safe
+	# model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
+	# return ChatOpenAI(model=model, temperature=0.2)
+	return ChatOpenAI(
+		model="meta-llama/llama-3-70b-instruct",
+		openai_api_base="https://openrouter.ai/api/v1",
+		openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+		temperature=0.2,
+		max_tokens=1024
+	)
 
 def _resolve_product(query: str) -> Tuple[Optional[str], Optional[str], float]:
 	"""Resolve a product mention to (ASIN, Title, score) using the catalog index.
@@ -158,16 +241,38 @@ def _resolve_product(query: str) -> Tuple[Optional[str], Optional[str], float]:
 	return asin, title, score if score is not None else 0.0
 
 
-def _retrieve_product_context(question: str, asin: Optional[str], k: int = 4) -> List[str]:
+def _retrieve_product_context(question: str, asin: Optional[str], k: int = 2) -> List[str]:
 	"""Retrieve QA passages, optionally filtering by ASIN."""
-	qa = _qa_db()
-	if asin:
-		docs = qa.similarity_search(question, k=k, filter={"ASIN": asin})
-		if not docs:  # fallback if filter too strict
+	# Try to use cached similarity search first
+	try:
+		if asin:
+			docs = _cached_similarity_search("qa", question, k)
+			if hasattr(docs[0], 'metadata') and docs[0].metadata.get("ASIN") != asin:
+				# Fallback to direct DB call with filter
+				qa = _qa_db()
+				docs = qa.similarity_search(question, k=k, filter={"ASIN": asin})
+				if not docs:  # fallback if filter too strict
+					docs = qa.similarity_search(question, k=k)
+		else:
+			docs = _cached_similarity_search("qa", question, k)
+		
+		if isinstance(docs, list) and docs and hasattr(docs[0], 'page_content'):
+			return [d.page_content for d in docs]
+		else:
+			# Fallback to direct DB call
+			qa = _qa_db()
 			docs = qa.similarity_search(question, k=k)
-	else:
-		docs = qa.similarity_search(question, k=k)
-	return [d.page_content for d in docs]
+			return [d.page_content for d in docs]
+	except Exception:
+		# Fallback to original implementation
+		qa = _qa_db()
+		if asin:
+			docs = qa.similarity_search(question, k=k, filter={"ASIN": asin})
+			if not docs:  # fallback if filter too strict
+				docs = qa.similarity_search(question, k=k)
+		else:
+			docs = qa.similarity_search(question, k=k)
+		return [d.page_content for d in docs]
 
 
 def _join_context(chunks: List[str], max_chars: int = 6000) -> str:

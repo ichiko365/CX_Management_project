@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import asyncio
 from typing import List, Deque, Dict, Tuple, Optional
 from collections import deque
 
@@ -26,48 +27,53 @@ except Exception:
 		sys.path.append(str(pathlib.Path(__file__).resolve().parent))
 		from qa_chain import TOOLS, answer_product_question, recommend_products, compare_products, get_faq_guidance  # type: ignore
 
-def _ensure_openai_api_key() -> None:
-	"""Ensure OPENAI_API_KEY is available via env, .env, or Streamlit secrets."""
-	if os.getenv("OPENAI_API_KEY"):
-		return
-	# Try default .env resolution
-	load_dotenv()
-	if os.getenv("OPENAI_API_KEY"):
-		return
-	# Try specific .env locations relative to app folder
-	base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-	for p in [
-		os.path.join(base_dir, ".env"),
-		os.path.join(os.path.dirname(base_dir), ".env"),
-		os.path.join(os.getcwd(), ".env"),
-	]:
-		try:
-			if os.path.exists(p):
-				load_dotenv(p)
-		except Exception:
-			pass
-		if os.getenv("OPENAI_API_KEY"):
-			return
-	# Try Streamlit secrets
-	secrets_path = os.path.join(base_dir, ".streamlit", "secrets.toml")
-	if not os.getenv("OPENAI_API_KEY") and os.path.exists(secrets_path) and tomli is not None:
-		try:
-			with open(secrets_path, "rb") as f:
-				data = tomli.load(f)
-			key = data.get("OPENAI_API_KEY")
-			if key:
-				os.environ["OPENAI_API_KEY"] = key
-			model = data.get("OPENAI_MODEL") or data.get("OPENAI_CHAT_MODEL")
-			if model and not os.getenv("OPENAI_MODEL"):
-				os.environ["OPENAI_MODEL"] = model
-		except Exception:
-			pass
+def _ensure_openrouter_api_key() -> None:
+    """Ensure OPENROUTER_API_KEY is available via env, .env, or Streamlit secrets."""
+    if os.getenv("OPENROUTER_API_KEY"):
+        return
+    # Try default .env resolution
+    load_dotenv()
+    if os.getenv("OPENROUTER_API_KEY"):
+        return
+    # Try specific .env locations relative to app folder
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    for p in [
+        os.path.join(base_dir, ".env"),
+        os.path.join(os.path.dirname(base_dir), ".env"),
+        os.path.join(os.getcwd(), ".env"),
+    ]:
+        try:
+            if os.path.exists(p):
+                load_dotenv(p)
+        except Exception:
+            pass
+        if os.getenv("OPENROUTER_API_KEY"):
+            return
+    # Try Streamlit secrets
+    secrets_path = os.path.join(base_dir, ".streamlit", "secrets.toml")
+    if not os.getenv("OPENROUTER_API_KEY") and os.path.exists(secrets_path) and tomli is not None:
+        try:
+            with open(secrets_path, "rb") as f:
+                data = tomli.load(f)
+            key = data.get("OPENROUTER_API_KEY")
+            if key:
+                os.environ["OPENROUTER_API_KEY"] = key
+        except Exception:
+            pass
 
 def _llm() -> ChatOpenAI:
-	_ensure_openai_api_key()
-	model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
+	_ensure_openrouter_api_key()
+	# Use OpenRouter with Llama 70B
+	# model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
 	# Tool-calling enabled by default for OpenAI Chat models via LangChain
-	return ChatOpenAI(model=model, temperature=0.2)
+	# return ChatOpenAI(model=model, temperature=0.2)
+	return ChatOpenAI(
+		model="meta-llama/llama-3-70b-instruct",
+		openai_api_base="https://openrouter.ai/api/v1",
+		openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+		temperature=0.2,
+		max_tokens=1024
+	)
 
 # def _llm() -> ChatOllama:
 # 	model = os.getenv("OLLAMA_MODEL", "llama3")
@@ -178,6 +184,18 @@ def _clean_faq_snippets(snips: str) -> str:
 		lines.append(ln)
 	return "\n".join(lines).strip()
 
+def _quick_intent_detection(query: str) -> Optional[str]:
+	"""Fast intent detection to optimize tool selection. Returns None if uncertain."""
+	q = query.lower()
+	if any(w in q for w in ["recommend", "similar", "like", "alternatives", "suggest", "show me", "find me"]):
+		return "recommend"
+	elif any(w in q for w in ["compare", "vs", "versus", "difference", "between", "which is better"]):
+		return "compare"
+	elif any(w in q for w in ["what", "how", "why", "tell me", "explain", "features", "benefits", "specs"]):
+		return "question"
+	else:
+		return None  # Let LLM decide when uncertain
+
 
 def get_agent():
 	"""Return an agent-like runnable that calls tools as needed."""
@@ -210,53 +228,66 @@ def run_agent(query: str, session_id: str = "default", history_limit: Optional[i
 			ans = "I couldn't find a previously mentioned product in this chat."
 		_append_turn(session_id, query, ans, turns_limit=history_limit)
 		return ans
-	agent = get_agent()
-	history_msgs = get_history_messages(session_id=session_id, turns_limit=history_limit)
-	result = agent.invoke({"input": query, "history": history_msgs})
+	
+	# Fast intent detection BEFORE LLM tool selection
+	detected_intent = _quick_intent_detection(query)
+	
+	# Route directly to tools based on intent detection, or fallback to LLM if uncertain
+	if detected_intent == "recommend":
+		output = recommend_products.invoke({"query": query})
+	elif detected_intent == "compare":
+		output = compare_products.invoke({"query": query})
+	elif detected_intent == "question":
+		output = answer_product_question.invoke({"question": query})
+	else:
+		# Fallback to LLM tool selection when intent is uncertain
+		agent = get_agent()
+		history_msgs = get_history_messages(session_id=session_id, turns_limit=history_limit)
+		result = agent.invoke({"input": query, "history": history_msgs})
 
-	# If the model decided to call a tool, LangChain returns a tool-call message.
-	# We handle one tool call round-trip for simplicity; UI can loop if needed.
-	if hasattr(result, "tool_calls") and result.tool_calls:
-		call = result.tool_calls[0]
-		name = call["name"]
-		args = call.get("args", {})
+		# If the model decided to call a tool, LangChain returns a tool-call message.
+		if hasattr(result, "tool_calls") and result.tool_calls:
+			call = result.tool_calls[0]
+			name = call["name"]
+			args = call.get("args", {})
 
-		if name == "answer_product_question":
-			output = answer_product_question.invoke(args)
-		elif name == "recommend_products":
-			output = recommend_products.invoke(args)
-		elif name == "compare_products":
-			output = compare_products.invoke(args)
+			if name == "answer_product_question":
+				output = answer_product_question.invoke(args)
+			elif name == "recommend_products":
+				output = recommend_products.invoke(args)
+			elif name == "compare_products":
+				output = compare_products.invoke(args)
+			else:
+				output = "I'm not sure how to help with that."
 		else:
-			output = "I'm not sure how to help with that."
+			# No tool call; return model's direct answer
+			direct = getattr(result, "content", "I couldn't process that request.")
+			_update_last_product(session_id, direct)
+			_append_turn(session_id, query, direct, turns_limit=history_limit)
+			return direct
 
-		# Optionally, send tool output back to the model for a final polish with FAQ guidance
-		llm = _llm()
-		faq_snippets = get_faq_guidance(query, k=3) if 'query' in locals() else ""
-		faq_snippets = _clean_faq_snippets(faq_snippets)
-		# If the user asked for features/benefits/specs, ensure bullet-pointed features
-		features_mode = any(w in query.lower() for w in ["feature", "features", "benefit", "benefits", "spec", "specs", "highlights"]) 
-		final = llm.invoke([
-			SystemMessage(content=(
-				"You will rewrite a tool result into a concise, user-friendly answer without adding new information. "
-				"Respect these constraints strictly: do not invent facts, do not copy any 'Q:' or 'A:' labels, and do not start with a question. "
-				"When helpful, align tone/structure with these FAQ snippets (if any). If they conflict with the tool result, ignore them.\n\n"
-				f"FAQ style guidance:\n{faq_snippets}\n\n"
-				+ ("If the user's request was for features/benefits/specs, present a short bullet list of key features extracted from the tool output, using the tool's wording where possible. " if features_mode else "")
-				+ "If the tool output contains a line like 'Product: <Title> (ASIN: <ASIN>)', keep it as the first line and then provide the answer."
-			)),
-			HumanMessage(content=str(output)),
-		])
-		final_text = getattr(final, "content", str(output))
-		_update_last_product(session_id, final_text)
-		_append_turn(session_id, query, final_text, turns_limit=history_limit)
-		return final_text
-
-	# No tool call; return model's direct answer
-	direct = getattr(result, "content", "I couldn't process that request.")
-	_update_last_product(session_id, direct)
-	_append_turn(session_id, query, direct, turns_limit=history_limit)
-	return direct
+	# Optionally, send tool output back to the model for a final polish with FAQ guidance
+	llm = _llm()
+	# Get FAQ guidance for additional context in final polish
+	faq_snippets = get_faq_guidance(query, k=2)
+	faq_snippets = _clean_faq_snippets(faq_snippets)
+	# If the user asked for features/benefits/specs, ensure bullet-pointed features
+	features_mode = any(w in query.lower() for w in ["feature", "features", "benefit", "benefits", "spec", "specs", "highlights"]) 
+	final = llm.invoke([
+		SystemMessage(content=(
+			"You will rewrite a tool result into a concise, user-friendly answer without adding new information. "
+			"Respect these constraints strictly: do not invent facts, do not copy any 'Q:' or 'A:' labels, and do not start with a question. "
+			"When helpful, align tone/structure with these FAQ snippets (if any). If they conflict with the tool result, ignore them.\n\n"
+			f"FAQ style guidance:\n{faq_snippets}\n\n"
+			+ ("If the user's request was for features/benefits/specs, present a short bullet list of key features extracted from the tool output, using the tool's wording where possible. " if features_mode else "")
+			+ "If the tool output contains a line like 'Product: <Title> (ASIN: <ASIN>)', keep it as the first line and then provide the answer."
+		)),
+		HumanMessage(content=str(output)),
+	])
+	final_text = getattr(final, "content", str(output))
+	_update_last_product(session_id, final_text)
+	_append_turn(session_id, query, final_text, turns_limit=history_limit)
+	return final_text
 
 
 # for testing

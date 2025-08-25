@@ -75,9 +75,9 @@ def build_index(texts, metadatas, persist_path: str, index_name: str):
     # Use a lightweight CPU embedding model to avoid MPS OOM
     # embeddings = OpenAIEmbeddings(model='text-embedding-3-large')
     embeddings = HuggingFaceEmbeddings(
-        # model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_name="Qwen/Qwen3-Embedding-0.6B",
-        model_kwargs={"device": "cpu"},
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        # model_name="Qwen/Qwen3-Embedding-0.6B",
+        model_kwargs={"device": "mps"},
         encode_kwargs={"batch_size": 16, "normalize_embeddings": True},
     )
     db = Chroma.from_texts(

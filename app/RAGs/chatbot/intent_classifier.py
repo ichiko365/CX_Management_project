@@ -6,12 +6,20 @@ from agent import run_agent
 import sqlite3
 import json
 from datetime import datetime
+import os
 
 class IntentRouter:
     """Main router class that manages intent classification and routing with SQLite persistence."""
     
     def __init__(self, db_path: str = "conversation_memory.db", thread_id: str = "user_session"):
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        # self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        self.llm = ChatOpenAI(
+		model="meta-llama/llama-3-70b-instruct",
+		openai_api_base="https://openrouter.ai/api/v1",
+		openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+		temperature=0.2,
+		max_tokens=1024
+	)
         self.router_llm = self.llm.with_structured_output(UserIntent)
         
         # SQLite setup for persistence
