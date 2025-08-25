@@ -581,7 +581,7 @@ class KpiEngine:
 
 	def sentiment_trend(
 		self,
-		freq: str = "M",
+		freq: str = "ME",
 		smoothing_window: int = 0,
 		mapping: Optional[Mapping[str, float]] = None,
 	) -> pd.DataFrame:

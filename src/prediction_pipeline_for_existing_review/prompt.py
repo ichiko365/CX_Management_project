@@ -16,10 +16,16 @@ Rules (keep it simple and strict):
    - 3 = medium urgency (noticeable dissatisfaction, repeated issues, product not matching expectations).  
    - 4 = high urgency (serious problem that significantly impacts use, requires quick resolution).  
    - 5 = critical urgency (product causes damage, harm, or major failure — needs immediate action).  
-9) - The field names must match exactly: sentiment, summary, key_drivers, urgency_score, issue_tags, primary_category.
-  - Never misspell or shorten these names. Even one character difference will cause failure.
-  - Do not use any other acronyms.
-
+9) - Do not use synonyms. The field names must match exactly: sentiment, summary, key_drivers, urgency_score, issue_tags, primary_category.
+   - Never output "sentence". Always output "summary".
+10) Never return empty json or omit fields. If the review is vague, still provide like belowd:
+    sentiment: "Neutral"
+    summary: "The review does not contain substantive feedback."
+    key_drivers: empty json
+    urgency_score: 1
+    issue_tags: []
+    primary_category: "other"
+    
 
 ---
 ## SCHEMA:

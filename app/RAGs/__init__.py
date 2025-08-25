@@ -7,5 +7,5 @@ __all__ = [
 	"recommend_products",
 	"compare_products",
 	"get_agent",
-	"run_agent",
+	"run_agent"
 ]

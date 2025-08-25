@@ -5,6 +5,8 @@ from tqdm import tqdm
 
 # LangChain and Pydantic components
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 
@@ -32,7 +34,12 @@ class LLMAnalysis:
                 format_instructions=parser.get_format_instructions()
             )
             # Hint the model to produce JSON-only outputs
-            model = ChatOllama(model=model_name, format="json")
+            if model_name.startswith("deepseek") or model_name.startswith("llama"):
+                model = ChatOllama(model=model_name, format="json")
+            elif model_name.startswith("gpt-"):
+                model = ChatOpenAI(model=model_name)
+            else:
+                model = ChatGoogleGenerativeAI(model=model_name)
             self.chain = chat_prompt | model | parser
             logger.info("LLM chain initialized successfully.")
         except Exception as e:

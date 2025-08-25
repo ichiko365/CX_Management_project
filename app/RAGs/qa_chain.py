@@ -13,11 +13,16 @@ except Exception:  # pragma: no cover
 	# Fallback for environments without langchain-chroma installed
 	from langchain.vectorstores import Chroma  # deprecated path
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
+# add ollama model
+from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from dotenv import load_dotenv
 
 load_dotenv()
+os.environ['HF_HOME'] = '/Users/nike/Documents/Data Science Work/Practice/Langchain/huggingface_cache'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 
 # Paths: default to module directory; allow override to CWD for notebooks with ENV RAGS_USE_CWD=1
@@ -32,9 +37,17 @@ CATALOG_DB_PATH = str(BASE_DIR / ".chroma_catalog")
 
 
 @lru_cache(maxsize=1)
-def _embeddings() -> OpenAIEmbeddings:
-	# Keep model consistent with ingestion
-	return OpenAIEmbeddings(model="text-embedding-3-large")
+def _embeddings():
+	# Keep model consistent with ingestion; force CPU to avoid MPS OOM on macOS
+	# return OpenAIEmbeddings(model="text-embedding-3-large")
+	return HuggingFaceEmbeddings(
+		# model_name="sentence-transformers/all-MiniLM-L6-v2",
+		model_name="Qwen/Qwen3-Embedding-0.6B",
+		model_kwargs={"device": "cpu"},
+		encode_kwargs={"batch_size": 16, "normalize_embeddings": True},
+	)
+FAQ_DB_PATH = str(BASE_DIR / ".chroma_faqs")
+FAQS_JSON_PATH = MODULE_DIR.parent / "data" / "FAQs.json"
 
 
 @lru_cache(maxsize=1)
@@ -47,11 +60,88 @@ def _catalog_db() -> Chroma:
 	return Chroma(persist_directory=CATALOG_DB_PATH, embedding_function=_embeddings())
 
 
-def _llm() -> ChatOpenAI:
-	# Do not change user's model: allow override via env, fallback is safe
-	model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
-	return ChatOpenAI(model=model, temperature=0.2)
 
+@lru_cache(maxsize=1)
+def _faq_db() -> Optional[Chroma]:
+	"""Load or build the FAQs vector store if data is available."""
+	try:
+		# If a persisted store exists, load it
+		if Path(FAQ_DB_PATH).exists():
+			return Chroma(persist_directory=FAQ_DB_PATH, embedding_function=_embeddings())
+		# Else try to build from JSON if present
+		if FAQS_JSON_PATH.exists():
+			faqs = _load_faqs_json()
+			if faqs:
+				_build_faq_index(faqs)
+				return Chroma(persist_directory=FAQ_DB_PATH, embedding_function=_embeddings())
+	except Exception:
+		pass
+	return None
+
+
+def _load_faqs_json() -> List[dict]:
+	"""Load FAQs from JSON. Accepts list of {question, answer} or a dict of q->a."""
+	try:
+		import json
+		with open(FAQS_JSON_PATH, "r", encoding="utf-8") as f:
+			data = json.load(f)
+		items: List[dict] = []
+		if isinstance(data, dict):
+			for k, v in data.items():
+				if isinstance(v, str):
+					items.append({"question": str(k), "answer": v})
+		elif isinstance(data, list):
+			for it in data:
+				if isinstance(it, dict):
+					q = it.get("question") or it.get("q") or it.get("Question")
+					a = it.get("answer") or it.get("a") or it.get("Answer")
+					if q and a:
+						items.append({"question": str(q), "answer": str(a)})
+		return items
+	except Exception:
+		return []
+
+
+def _build_faq_index(faqs: List[dict]) -> None:
+	"""Build and persist a Chroma index for FAQs from a list of {question, answer}."""
+	if not faqs:
+		return
+	texts = [f"Q: {it['question']}\nA: {it['answer']}" for it in faqs]
+	metadatas = [{"type": "faq", "idx": i} for i in range(len(texts))]
+	try:
+		Chroma.from_texts(texts, _embeddings(), metadatas=metadatas, persist_directory=FAQ_DB_PATH)
+	except Exception:
+		# If creation fails, ignore; FAQ guidance will be empty
+		pass
+
+
+def _retrieve_faq_guidance(question: str, k: int = 3) -> str:
+	db = _faq_db()
+	if not db:
+		return ""
+	try:
+		docs = db.similarity_search(question, k=k)
+		if not docs:
+			return ""
+		# Join a few Q/A snippets for style/structure guidance
+		return "\n\n".join(d.page_content for d in docs)
+	except Exception:
+		return ""
+
+
+def get_faq_guidance(question: str, k: int = 3) -> str:
+	"""Public helper for agents/UI to fetch FAQ-style guidance for phrasing answers."""
+	return _retrieve_faq_guidance(question, k=k)
+
+def _llm() -> ChatOllama:
+	# Do not change user's model: allow override via env, fallback is safe
+	# model = os.getenv("OLLAMA_MODEL", "llama3")
+	return ChatOllama(model='llama3-groq-tool-use')
+
+# def _llm() -> ChatOpenAI:
+# 	# Do not change user's model: allow override via env, fallback is safe
+# 	model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
+# 	return ChatOpenAI(model=model, temperature=0.2)
 
 def _resolve_product(query: str) -> Tuple[Optional[str], Optional[str], float]:
 	"""Resolve a product mention to (ASIN, Title, score) using the catalog index.
@@ -99,9 +189,16 @@ def answer_product_question(question: str) -> str:
 	context_chunks = _retrieve_product_context(question, asin)
 	context_text = _join_context(context_chunks)
 
+	# sys = (
+	# 	"You are a helpful customer support assistant. Answer using only the provided beauty product context. "
+	# 	"If the answer is not clearly supported by the context, say you are not sure. Keep responses concise."
+	# )
 	sys = (
-		"You are a helpful customer support assistant. Answer using only the provided beauty product context. "
-		"If the answer is not clearly supported by the context, say you are not sure. Keep responses concise."
+		"You are answering a product-specific question. "
+		"- Use ONLY the product’s ASIN, title, and description provided in context. "
+		"- If the question asks about information not present (e.g., ingredients, price, cruelty-free, shades), reply: "
+		"This information is not available from the product description I have."
+		"- Always cite which part of the description you used."
 	)
 	prompt = ChatPromptTemplate.from_messages(
 		[
@@ -118,7 +215,8 @@ def answer_product_question(question: str) -> str:
 	llm = _llm()
 	msg = prompt.format_messages(asin=asin, title=title, score=score, context=context_text, q=question)
 	out = llm.invoke(msg)
-	return out.content
+	header = f"Product: {title or 'Unknown'} (ASIN: {asin or 'N/A'})\n"
+	return header + (out.content or "")
 
 
 def _parse_number_from_text(text: str, default: int, lo: int = 1, hi: int = 10) -> int:
@@ -145,8 +243,25 @@ def _parse_number_from_text(text: str, default: int, lo: int = 1, hi: int = 10) 
 
 
 @tool("recommend_products", return_direct=False)
-def recommend_products(query: str, n: Optional[int] = None) -> str:
-	"""Recommend N similar products for a given user query or product mention. Detects N from the query if present. Inputs: query (string), n (optional int)."""
+def recommend_products(
+	query: str,
+	n: Optional[int] = None,
+) -> str:
+	"""Recommend N similar products for a given user query or product mention. Detects N from the query if present.
+
+	Inputs:
+	- query (string)
+	- n (optional int)
+	- prompt (optional ChatPromptTemplate): If provided, this template will be used to format the final response via the LLM.
+
+	Template variables provided when `prompt` is used:
+	- query: Here are the some products related to your request.
+	- n: number of recommendations requested
+	- anchor_asin: detected ASIN (may be None)
+	- anchor_title: detected product title (may be None)
+	- items: list of {"title": str, "asin": str, "score": float}
+	- bullets: preformatted bullet list string
+	"""
 	asin, title, _ = _resolve_product(query)
 	catalog = _catalog_db()
 
@@ -175,6 +290,44 @@ def recommend_products(query: str, n: Optional[int] = None) -> str:
 
 	bullets = [f"- {t} (ASIN: {a})" for t, a, _ in items]
 	header = f"Similar products to '{title or query}':" if (title or query) else "Similar products:"
+
+	# If a ChatPromptTemplate is supplied, use it to render a richer answer with the LLM.
+	sys = (
+		"You are recommending products. "
+		"- Start with 'Here are some products related to your request.'"
+		"- First, detect the category from query (mascara, eyeliner, etc.). "
+		"- Only recommend products in the SAME category. "
+		"- If budget, finish, or filters are mentioned but missing in data, explain that limitation clearly. "
+		"- Do not recommend products outside the retrieved set."
+		"- In the end, provide why are you giving this recommendation."
+	)
+
+	prompt = ChatPromptTemplate.from_messages(
+		[
+			("system", sys),
+			("human", "{bullets}\n\nBased on the above, answer the user's query: {query}"),
+		]
+	)
+	if prompt is not None:
+		llm = _llm()
+		# Build a flexible payload; the template can pick what it needs.
+		payload = {
+			"query": query,
+			"n": n_val,
+			"anchor_asin": asin,
+			"anchor_title": title,
+			"items": [
+				{"title": t, "asin": a, "score": float(s) if s is not None else None}
+				for (t, a, s) in items
+			],
+			"bullets": "\n".join([header, *bullets]),
+		}
+		messages = prompt.format_messages(**payload)
+		out = llm.invoke(messages)
+		anchor_line = f"Product: {title or 'Unknown'} (ASIN: {asin or 'N/A'})\n" if (title or asin) else ""
+		return anchor_line + (out.content or "")
+
+	# Fallback: simple bullet list
 	return "\n".join([header, *bullets])
 
 
@@ -248,10 +401,17 @@ def compare_products(
 		)
 
 	# Build dynamic prompt for N products
+	# sys = (
+	# 	"You compare multiple products strictly using the provided contexts. "
+	# 	"Output bullet points grouped by each product, focusing on key features, specs, and notable differences. "
+	# 	"Do not fabricate details; if unknown, state it briefly. Keep it concise."
+	# )
 	sys = (
-		"You compare multiple products strictly using the provided contexts. "
-		"Output bullet points grouped by each product, focusing on key features, specs, and notable differences. "
-		"Do not fabricate details; if unknown, state it briefly. Keep it concise."
+		"You are comparing two or more products. "
+		"- First resolve which products the user means (match title/ASIN). "
+		"- Only compare products from the same category. "
+		"- If a requested product cannot be found, ask user to clarify. "
+		"- Do not add unrelated products. "
 	)
 
 	human_lines = []
@@ -265,7 +425,8 @@ def compare_products(
 	])
 	llm = _llm()
 	out = llm.invoke(prompt.format_messages())
-	return out.content
+	anchor_line = f"Product: {resolved[0][1]} (ASIN: {resolved[0][0]})\n" if resolved else ""
+	return anchor_line + (out.content or "")
 
 
 # Optional convenience: expose a small registry for external imports

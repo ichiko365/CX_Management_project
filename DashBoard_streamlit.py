@@ -2,88 +2,46 @@ import os
 import sys
 import time
 import socket
-import shutil
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
-from urllib.parse import urlsplit
 
-
-# Optional extras (graceful fallback if not installed)
+# Optional extras (graceful fallback)
 try:
     from streamlit_extras.stylable_container import stylable_container
-    from streamlit_extras.metric_cards import style_metric_cards
-    from streamlit_extras.badges import badge
     from streamlit_extras.let_it_rain import rain
     EXTRAS = True
 except Exception:
     EXTRAS = False
     from contextlib import contextmanager
 
+    def rain(*args, **kwargs):
+        return None
+
     @contextmanager
     def stylable_container(key: str, **kwargs):
         yield
 
-    def style_metric_cards(**kwargs):
-        return None
-
-    def badge(*args, **kwargs):
-        return None
-
-    def rain(*args, **kwargs):
-        return None
-
 
 # ----------------------- Page setup -----------------------
-st.set_page_config(page_title="CX Hub (Streamlit)", page_icon="🧭", layout="wide")
+st.set_page_config(page_title="CX Hub", page_icon="🔐", layout="wide")
 
-bg_start = "#f6f7ff"
-bg_end = "#fff0f6"
-st.markdown(
-    f"""
-    <style>
-    [data-testid=\"stAppViewContainer\"] {{
-        background: linear-gradient(180deg, {bg_start} 0%, {bg_end} 100%) !important;
-    }}
-    [data-testid=\"stHeader\"] {{ background: transparent; }}
-    .card {{ background:#fff; border:1px solid #eee; border-radius:14px; padding:1rem 1.2rem; box-shadow:0 2px 4px rgba(0,0,0,0.04); }}
-    .soft {{ background:linear-gradient(135deg,#fff,#f9f6ff); }}
-    .status-badge {{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; margin-top:4px; }}
-    .status-badge.ok {{ background:#e8fff3; color:#0c8f3d; border:1px solid #b4f0cd; }}
-    .status-badge.stop {{ background:#ffe8e8; color:#c22727; border:1px solid #ffc2c2; }}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# ----------------------- Config -----------------------
+# ----------------------- Paths & Config -------------------
 BASE_DIR = Path(__file__).resolve().parent
+HOST = os.getenv("HUB_HOST", "127.0.0.1")
 PYTHON = sys.executable
-HOST = os.getenv("ROUTER_HOST", "127.0.0.1")
 
-# Default UI ports (we'll adapt if busy)
-DEFAULT_CUSTOMER_UI_PORT = int(os.getenv("CUSTOMER_APP_PORT", "8501"))
-DEFAULT_CLIENT_UI_PORT = int(os.getenv("CLIENT_APP_PORT", "8502"))
-
-# App paths
+# Streamlit apps to launch
 CUSTOMER_APP_PATH = BASE_DIR / "app" / "app.py"
 CLIENT_APP_PATH = BASE_DIR / "src" / "dashboard_project" / "app.py"
 
-# Optional existing FastAPI router to piggyback on
-ROUTER_PORT = int(os.getenv("ROUTER_PORT", "8000"))
-ROUTER_URL = f"http://{HOST}:{ROUTER_PORT}"
-
-
-def _router_alive() -> bool:
-    try:
-        r = requests.get(f"{ROUTER_URL}/healthz", timeout=0.6)
-        return r.status_code == 200
-    except Exception:
-        return False
+# Default UI ports
+DEFAULT_CUSTOMER_UI_PORT = int(os.getenv("CUSTOMER_APP_PORT", "8501"))
+DEFAULT_CLIENT_UI_PORT = int(os.getenv("CLIENT_APP_PORT", "8502"))
 
 
 def _is_port_open(host: str, port: int, timeout: float = 0.35) -> bool:
@@ -94,20 +52,20 @@ def _is_port_open(host: str, port: int, timeout: float = 0.35) -> bool:
 
 def _st_health(host: str, port: int) -> bool:
     try:
-        r = requests.get(f"http://{host}:{port}/_stcore/health", timeout=0.5)
+        r = requests.get(f"http://{host}:{port}/_stcore/health", timeout=0.6)
         return r.status_code == 200
     except Exception:
         return _is_port_open(host, port)
 
 
-def _find_free_port(start: int, end: int) -> int | None:
+def _find_free_port(start: int, end: int) -> Optional[int]:
     for p in range(start, end + 1):
         if not _is_port_open(HOST, p):
             return p
     return None
 
 
-def _start_streamlit(app_path: Path, ui_port: int, env_overrides: dict | None = None) -> None:
+def _start_streamlit(app_path: Path, ui_port: int, env_overrides: Optional[dict] = None) -> None:
     if not app_path.exists():
         st.error(f"App not found: {app_path}")
         return
@@ -139,164 +97,167 @@ def _start_streamlit(app_path: Path, ui_port: int, env_overrides: dict | None = 
         st.error(f"Failed to start Streamlit: {e}")
 
 
-# Persist chosen ports across reruns
+# ----------------------- State & Ports --------------------
 if "cust_ui_port" not in st.session_state:
     st.session_state["cust_ui_port"] = (
         DEFAULT_CUSTOMER_UI_PORT
         if not _is_port_open(HOST, DEFAULT_CUSTOMER_UI_PORT)
-        else (_find_free_port(DEFAULT_CUSTOMER_UI_PORT + 2, DEFAULT_CUSTOMER_UI_PORT + 40) or DEFAULT_CUSTOMER_UI_PORT)
+        else (_find_free_port(DEFAULT_CUSTOMER_UI_PORT + 1, DEFAULT_CUSTOMER_UI_PORT + 50) or DEFAULT_CUSTOMER_UI_PORT)
     )
 if "client_ui_port" not in st.session_state:
     st.session_state["client_ui_port"] = (
         DEFAULT_CLIENT_UI_PORT
         if not _is_port_open(HOST, DEFAULT_CLIENT_UI_PORT)
-        else (_find_free_port(DEFAULT_CLIENT_UI_PORT + 2, DEFAULT_CLIENT_UI_PORT + 40) or DEFAULT_CLIENT_UI_PORT)
+        else (_find_free_port(DEFAULT_CLIENT_UI_PORT + 1, DEFAULT_CLIENT_UI_PORT + 50) or DEFAULT_CLIENT_UI_PORT)
     )
-
-# Ensure distinct ports (avoid accidental collisions if env defaults are equal)
+# ensure distinct
 if st.session_state["client_ui_port"] == st.session_state["cust_ui_port"]:
-    # Prefer shifting client port to the next available
-    start_from = max(st.session_state["client_ui_port"], DEFAULT_CLIENT_UI_PORT) + 1
-    new_client = _find_free_port(start_from, start_from + 50) or _find_free_port(8500, 8700) or (st.session_state["cust_ui_port"] + 1)
-    st.session_state["client_ui_port"] = new_client
+    upper = max(st.session_state["client_ui_port"], st.session_state["cust_ui_port"]) + 1
+    alt = _find_free_port(upper, upper + 60)
+    st.session_state["client_ui_port"] = alt or (st.session_state["cust_ui_port"] + 1)
+
+# Current view: login | client | customer
+st.session_state.setdefault("view", "login")
 
 
-st.markdown(
-    """
-    <h1 style="margin:0 0 .25rem 0; background:linear-gradient(90deg,#6a00ff,#d800b9); -webkit-background-clip:text; background-clip:text; color:transparent;">
-      CX Hub
-    </h1>
-    <div style="opacity:.85">Start, embed, or open the Customer app and Client dashboard.</div>
-    """,
-    unsafe_allow_html=True,
-)
+# ----------------------- Theming & CSS --------------------
+bg_url = "https://images.unsplash.com/photo-1526318472351-c75fcf070305?q=80&w=1600&auto=format&fit=crop"
+css = """
+    <style>
+    body { overflow-x: hidden; }
+    [data-testid="stAppViewContainer"] {
+        background: linear-gradient(120deg, rgba(0,0,0,0.25), rgba(0,0,0,0.25)),
+                    url('REPLACE_BG') center/cover no-repeat fixed !important;
+    }
+    /* Frosted glass card */
+    .glass {
+        background: rgba(255,255,255,0.14);
+        border: 1px solid rgba(255,255,255,0.25);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 18px;
+        padding: 304px 26px;
+    }
+    .center-wrap { display:flex; min-height: 0vh; align-items:center; justify-content:center; }
+    .title-grad {
+        background: linear-gradient(90deg, #6a00ff, #d800b9);
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        font-weight: 800; letter-spacing: .5px;
+    }
+    .small-link { font-size: 0.9rem; opacity: .95; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px; background:#ffffff22; border:1px solid #ffffff55; }
+    /* Floating animation for subtle motion */
+    @keyframes floaty {
+      0% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+      100% { transform: translateY(0); }
+    }
+    .floaty { animation: floaty 6s ease-in-out infinite; }
+    /* top-right actions */
+    .topbar { position: sticky; top: 0; z-index: 100; display:flex; justify-content:flex-end; padding: 0.4rem 0; }
+    </style>
+    """.replace("REPLACE_BG", bg_url)
+st.markdown(css, unsafe_allow_html=True)
 
 
-def app_card(title: str, desc: str, emoji: str, url: str, healthy: bool, start_cb, embed_key: str):
-    with stylable_container(
-        f"card-{embed_key}",
-        css_styles="""
-            {
-                background: white; border:1px solid #eee; border-radius:14px; padding: 1.0rem 1.2rem;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.04);
-            }
-        """,
-    ):
-        c1, c2 = st.columns([3, 2], vertical_alignment="center")
-        with c1:
-            st.markdown(f"### {emoji} {title}")
-            st.caption(desc)
-            if EXTRAS:
-                lab = "Running" if healthy else "Stopped"
-                cls = "ok" if healthy else "stop"
-                st.markdown(f"<span class='status-badge {cls}'>{lab}</span>", unsafe_allow_html=True)
+def _poll_until_healthy(port: int, timeout: float = 10.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.35)
+        if _st_health(HOST, port):
+            return True
+    return _is_port_open(HOST, port)
+
+
+def _login_card():
+    # Animated confetti when page loads
+    if EXTRAS:
+        rain(emoji="✨", font_size=18, falling_speed=4, animation_length=1)
+
+    st.markdown("<div class='center-wrap'>", unsafe_allow_html=True)
+    with stylable_container("login_glass", css_styles=".glass{width:min(520px,92vw);} "):
+        st.markdown("<div class='glass floaty'>", unsafe_allow_html=True)
+        st.markdown("<h1 class='title-grad' style='text-align:center; margin:0 0 .25rem;'>Login</h1>", unsafe_allow_html=True)
+        st.caption("Sign in to continue to CX Management")
+
+        with st.form("login_form", clear_on_submit=False):
+            u = st.text_input("Username", placeholder="Enter username")
+            p = st.text_input("Password", type="password", placeholder="Enter password")
+            cols = st.columns([1, 1])
+            with cols[0]:
+                _ = st.checkbox("Remember me", value=False)
+            with cols[1]:
+                st.markdown("<div style='text-align:right;' class='small-link'><a>Forgot password?</a></div>", unsafe_allow_html=True)
+            submit = st.form_submit_button("Login", use_container_width=True, type="primary")
+
+        st.markdown("<div style='display:flex; gap:14px; justify-content:center; margin-top:10px;'>"
+                    "<span class='pill'>About us</span>"
+                    "<span class='pill'>Features</span>"
+                    "<span class='pill'>Contact us</span>"
+                    "</div>", unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if submit:
+        # Validate simple credentials
+        ok = False
+        target = None
+        if u == "Nikhil001" and p == "1234567890":
+            ok = True
+            target = "client"
+        elif u == "Aryan001" and p == "1234567890":
+            ok = True
+            target = "customer"
+        else:
+            st.error("Invalid credentials")
+
+        if ok and target:
+            # Launch target app (on its own port) if not already running
+            if target == "client":
+                port = st.session_state["client_ui_port"]
+                _start_streamlit(CLIENT_APP_PATH, port)
+                _poll_until_healthy(port)
+                st.session_state["view"] = "client"
             else:
-                st.write("Status:", "🟢" if healthy else "🔴")
-        with c2:
-            st.link_button("Open in new tab", url, type="primary", disabled=not healthy)
-            start = st.button("Start / Restart", key=f"start-{embed_key}")
-            if start:
-                start_cb()
-                # Immediately poll the specific app port for readiness so the status updates now
-                try:
-                    parsed = urlsplit(url)
-                    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-                except Exception:
-                    port = None
-                if port:
-                    with st.spinner("Starting..."):
-                        deadline = time.time() + 10.0
-                        while time.time() < deadline:
-                            time.sleep(0.35)
-                            if _st_health(HOST, int(port)):
-                                break
-                st.rerun()
-
-        with st.expander("Embed preview"):
-            if healthy:
-                components.iframe(url, height=740, width=1280, scrolling=True)
-            else:
-                st.info("App not running. Click Start first.")
+                port = st.session_state["cust_ui_port"]
+                # Give customer app its own internal backend port to avoid collisions
+                api_port = _find_free_port(8100, 8300) or 8100
+                _start_streamlit(CUSTOMER_APP_PATH, port, env_overrides={"BACKEND_HOST": HOST, "BACKEND_PORT": api_port})
+                _poll_until_healthy(port)
+                st.session_state["view"] = "customer"
+            st.rerun()
 
 
-def start_customer():
-    ui_port = st.session_state["cust_ui_port"]
-    # Avoid backend collision with any FastAPI (e.g., router on 8000)
-    be_port = _find_free_port(8100, 8300) or 8100
-    if _router_alive():
-        try:
-            requests.get(f"{ROUTER_URL}/go/customer", timeout=1.2)
-            return
-        except Exception:
-            pass
-    _start_streamlit(
-        CUSTOMER_APP_PATH,
-        ui_port,
-        env_overrides={"BACKEND_HOST": HOST, "BACKEND_PORT": be_port},
-    )
+def _dashboard_wrapper(title: str, port: int):
+    # top-right logout
+    st.markdown("<div class='topbar'>", unsafe_allow_html=True)
+    _, right = st.columns([6, 1])
+    with right:
+        if st.button("Logout", type="secondary"):
+            st.session_state["view"] = "login"
+            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown(f"<h2 class='title-grad' style='margin:.25rem 0 .5rem'>{title}</h2>", unsafe_allow_html=True)
+    # full-width iframe
+    url = f"http://{HOST}:{port}"
+    # Ensure app is up (if user bookmark jumped here)
+    if not _st_health(HOST, port):
+        with st.spinner("Starting application…"):
+            _poll_until_healthy(port)
+    components.iframe(url, height=900)
 
 
-def start_client():
-    ui_port = st.session_state["client_ui_port"]
-    if _router_alive():
-        try:
-            requests.get(f"{ROUTER_URL}/go/client", timeout=1.2)
-            return
-        except Exception:
-            pass
-    _start_streamlit(CLIENT_APP_PATH, ui_port)
-
-
-# ----------------------- Layout -----------------------
-cust_url = f"http://{HOST}:{st.session_state['cust_ui_port']}"
-client_url = f"http://{HOST}:{st.session_state['client_ui_port']}"
-
-cust_ok = _st_health(HOST, st.session_state["cust_ui_port"])
-client_ok = _st_health(HOST, st.session_state["client_ui_port"])
-
-if EXTRAS and (cust_ok or client_ok):
-    rain(
-        emoji="✨",
-        font_size=16,
-        falling_speed=3,
-        animation_length=1,
-    )
-
-left, right = st.columns(2)
-with left:
-    app_card(
-        "Customer App",
-        "Submit reviews and trigger pipeline.",
-        "🧑‍💼",
-        cust_url,
-        cust_ok,
-        start_customer,
-        "customer",
-    )
-with right:
-    app_card(
-        "Client Dashboard",
-        "Explore KPIs and insights.",
-        "📊",
-        client_url,
-        client_ok,
-        start_client,
-        "client",
-    )
-
-
-# ----------------------- System status -----------------------
-st.markdown("---")
-st.caption("System status")
-colA, colB, colC, colD = st.columns(4)
-colA.metric("Router alive", "Yes" if _router_alive() else "No")
-colB.metric("Customer UI port", st.session_state["cust_ui_port"]) 
-colC.metric("Client UI port", st.session_state["client_ui_port"]) 
-colD.metric("Extras", "On" if EXTRAS else "Off")
-
-if EXTRAS:
-    style_metric_cards(border_left_color="#6a00ff")
-
-st.info(
-    "Tip: This Streamlit hub can start apps directly or via your FastAPI router if it's running."
-)
+# ----------------------- Router ---------------------------
+view = st.session_state.get("view", "login")
+if view == "login":
+    _login_card()
+elif view == "client":
+    _dashboard_wrapper("Client Dashboard", st.session_state["client_ui_port"])
+elif view == "customer":
+    _dashboard_wrapper("Customer Dashboard", st.session_state["cust_ui_port"])
+else:
+    st.session_state["view"] = "login"
+    st.experimental_rerun()

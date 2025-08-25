@@ -220,3 +220,4 @@ __pycache__/
 # .gitignore
 app/RAGs/.chroma_catalog/
 app/RAGs/.chroma_qa/
+cx_dashboard/data/amazon_data_v2.csv

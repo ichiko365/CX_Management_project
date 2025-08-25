@@ -1,11 +1,17 @@
 import json
 import os
 from dotenv import load_dotenv
-from langchain.vectorstores import Chroma
+try:
+    from langchain_chroma import Chroma  # type: ignore
+except Exception:  # pragma: no cover
+    from langchain.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from tqdm import tqdm  # Import tqdm for progress bars
 
 load_dotenv()
+os.environ['HF_HOME'] = '/Users/nike/Documents/Data Science Work/Practice/Langchain/huggingface_cache'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 # make the current folder the working directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -14,6 +20,8 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = "../data/product/description.json"
 QA_DB_PATH = ".chroma_qa"
 CATALOG_DB_PATH = ".chroma_catalog"
+FAQ_DB_PATH = ".chroma_faqs"
+FAQS_JSON_PATH = "../data/FAQs.json"
 
 
 def load_data(file_path: str):
@@ -64,7 +72,14 @@ def build_index(texts, metadatas, persist_path: str, index_name: str):
     # Note: Chroma.from_texts is a bulk operation. 
     # A progress bar is not easily applicable here without batching.
     # The console messages will indicate the start and end of this process.
-    embeddings = OpenAIEmbeddings(model='text-embedding-3-large')
+    # Use a lightweight CPU embedding model to avoid MPS OOM
+    # embeddings = OpenAIEmbeddings(model='text-embedding-3-large')
+    embeddings = HuggingFaceEmbeddings(
+        # model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_name="Qwen/Qwen3-Embedding-0.6B",
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"batch_size": 16, "normalize_embeddings": True},
+    )
     db = Chroma.from_texts(
         texts,
         embeddings,
@@ -85,6 +100,31 @@ def build_indexes():
     # Catalog Index
     catalog_texts, catalog_metadatas = prepare_catalog_data(data)
     build_index(catalog_texts, catalog_metadatas, CATALOG_DB_PATH, "Catalog")
+
+    # FAQs Index (optional)
+    try:
+        if os.path.exists(FAQS_JSON_PATH):
+            with open(FAQS_JSON_PATH, "r", encoding="utf-8") as f:
+                faqs_data = json.load(f)
+            texts = []
+            metas = []
+            if isinstance(faqs_data, dict):
+                for q, a in faqs_data.items():
+                    if isinstance(a, str):
+                        texts.append(f"Q: {q}\nA: {a}")
+                        metas.append({"type": "faq"})
+            elif isinstance(faqs_data, list):
+                for it in faqs_data:
+                    if isinstance(it, dict):
+                        q = it.get("question") or it.get("q") or it.get("Question")
+                        a = it.get("answer") or it.get("a") or it.get("Answer")
+                        if q and a:
+                            texts.append(f"Q: {q}\nA: {a}")
+                            metas.append({"type": "faq"})
+            if texts:
+                build_index(texts, metas, FAQ_DB_PATH, "FAQs")
+    except Exception as e:
+        print(f"Skipping FAQs index build due to error: {e}")
     
     print("\nAll indexes have been built successfully!")
 

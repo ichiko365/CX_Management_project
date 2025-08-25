@@ -3,8 +3,10 @@ import pandas as pd
 
 from database.queries import fetch_table, fetch_count
 from processing.calculation import get_filter_options, apply_filters, KpiEngine
+from processing.team_task import TeamTaskService
 
 st.set_page_config(layout="wide")
+TASKS = TeamTaskService()
 
 # THEME: Set colors for background and title gradient — change these to adjust look
 bg_start = "#e5fbff"   #  (background)
@@ -134,6 +136,45 @@ smoothing_window = st.sidebar.slider(
     help="Rolling window size; 0 disables smoothing",
 )
 
+# Compute KPI dict locally (mirrors calculation.KpiEngine semantics for the dashboard)
+def _compute_kpis_for_dashboard(filtered_df: pd.DataFrame, use_review_date: bool, period_days: int) -> dict:
+    if not isinstance(filtered_df, pd.DataFrame):
+        filtered_df = pd.DataFrame()
+
+    if use_review_date:
+        # Sentiment score (overall)
+        mapping = {
+            "Positive": 10.0, "Neutral": 5.0, "Mixed": 3.0, "Negative": 1.0,
+        }
+        if not filtered_df.empty and "sentiment" in filtered_df.columns:
+            sent_series = filtered_df["sentiment"].map(lambda s: mapping.get(str(s), None)).dropna()
+            sent_score_overall = float(sent_series.mean()) if not sent_series.empty else None
+        else:
+            sent_score_overall = None
+
+        # Review volume (overall)
+        vol_overall = int(len(filtered_df)) if filtered_df is not None else 0
+
+        # Urgent issues (overall) – based only on urgency_score thresholds
+        if not filtered_df.empty:
+            urgency = pd.to_numeric(filtered_df.get("urgency_score", pd.Series(index=filtered_df.index)), errors="coerce")
+            urgent_mask = urgency.fillna(0) >= 3
+            total_u = int(urgent_mask.sum())
+            critical_u = int((urgency >= 5).fillna(False).sum())
+            high_u = int(((urgency >= 4) & (urgency < 5)).fillna(False).sum())
+        else:
+            total_u = critical_u = high_u = 0
+
+        return {
+            "sentiment_score": {"score": sent_score_overall, "delta": None},
+            "review_volume": {"count": vol_overall, "delta_pct": None},
+            "urgent_issues": {"total": total_u, "critical": critical_u, "high": high_u},
+            "team_utilization": None,
+        }
+    else:
+        engine = KpiEngine(filtered_df)
+        return engine.compute_all(days=period_days)
+
 def _dashboard_page():
     # Header controls: period selection and Category filter (moved from sidebar)
     left, mid, right = st.columns([1, 1, 2])
@@ -161,6 +202,19 @@ def _dashboard_page():
             pass
     use_review_date = period_label == "Use Review Date"
     effective_review_date_range = review_date_range if use_review_date else None
+    # Expand Review date range by ±1 day on both sides for Dashboard filtering
+    if use_review_date and isinstance(effective_review_date_range, (list, tuple)) and len(effective_review_date_range) == 2:
+        try:
+            _s, _e = effective_review_date_range
+            _s_ts = pd.to_datetime(_s, errors="coerce")
+            _e_ts = pd.to_datetime(_e, errors="coerce")
+            if pd.notna(_s_ts) and pd.notna(_e_ts):
+                effective_review_date_range = (
+                    (_s_ts - pd.Timedelta(days=1)).date(),
+                    (_e_ts + pd.Timedelta(days=1)).date(),
+                )
+        except Exception:
+            pass
     filtered_df = apply_filters(
         base_df,
         asin_values=[],
@@ -174,40 +228,7 @@ def _dashboard_page():
     # KPI cards
     days_map = {"Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90}
     period_days = days_map.get(period_label, 30)
-    kpi_engine = KpiEngine(filtered_df)
-    if use_review_date:
-        # Compute KPIs over the filtered_df without time-window deltas
-        # Sentiment score (overall)
-        mapping = getattr(KpiEngine, "DEFAULT_MAPPING", {
-            "Positive": 10.0, "Neutral": 5.0, "Mixed": 3.0, "Negative": 1.0,
-        })
-        if filtered_df is not None and not filtered_df.empty and "sentiment" in filtered_df.columns:
-            sent_series = filtered_df["sentiment"].map(lambda s: mapping.get(str(s), None)).dropna()
-            sent_score_overall = float(sent_series.mean()) if not sent_series.empty else None
-        else:
-            sent_score_overall = None
-
-        # Review volume (overall)
-        vol_overall = int(len(filtered_df)) if filtered_df is not None else 0
-
-        # Urgent issues (overall) – based only on urgency_score thresholds
-        if filtered_df is not None and not filtered_df.empty:
-            urgency = pd.to_numeric(filtered_df.get("urgency_score", pd.Series(index=filtered_df.index)), errors="coerce")
-            urgent_mask = urgency.fillna(0) >= 3
-            total_u = int(urgent_mask.sum())
-            critical_u = int((urgency >= 5).fillna(False).sum())
-            high_u = int(((urgency >= 4) & (urgency < 5)).fillna(False).sum())
-        else:
-            total_u = critical_u = high_u = 0
-
-        k = {
-            "sentiment_score": {"score": sent_score_overall, "delta": None},
-            "review_volume": {"count": vol_overall, "delta_pct": None},
-            "urgent_issues": {"total": total_u, "critical": critical_u, "high": high_u},
-            "team_utilization": None,
-        }
-    else:
-        k = kpi_engine.compute_all(days=period_days)
+    k = _compute_kpis_for_dashboard(filtered_df, use_review_date, period_days)
 
     # KPI CSS: soft blue background + gauge styles
     st.markdown(
@@ -223,7 +244,7 @@ def _dashboard_page():
     /* Centered number card variant */
     .card.center {position:relative; align-items:center; justify-content:center; text-align:center;}
     .card.center > div:first-child {position:absolute; top:10px; left:12px; font-weight:600; font-size:0.9rem; color:#334155; opacity:0.9;}
-    .card.center .kpi-value {font-size:6.2rem; line-height:1; margin:0;}
+    .card.center .kpi-value {font-size:5rem; line-height:1; margin:0;}
     .card.center .kpi-sub {position:absolute; bottom:10px; left:12px; right:12px; text-align:center;}
     /* Tinted badges for Urgent Issues */
     .badge {display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:8px 10px; border-radius:10px; border:1px solid transparent;}
@@ -521,6 +542,91 @@ def _dashboard_page():
                         st.info("Install folium or pydeck to see the map.")
             else:
                 st.info("No region column available to map.")
+
+    # --- Team Ops Panels (Urgent Feedback Queue + Team Performance) ---
+    st.markdown("### Team Operations")
+    st.caption("Urgent feedback and team task performance")
+    # CSS for panels and progress
+    st.markdown(
+        """
+        <style>
+        .panel {background:#ffffff; border:1px solid #e5e7eb; border-radius:16px; padding:0.8rem 1rem; box-shadow:0 1px 4px rgba(0,0,0,0.05);} 
+        .panel h3 {margin:0 0 0.25rem 0; font-weight:800;}
+        .muted {color:#6b7280; font-size:0.9rem; margin-bottom:0.5rem;}
+        .table {width:100%; border-collapse:collapse;}
+        .table th {text-align:left; color:#374151; font-weight:700; padding:8px 4px;}
+        .table td {padding:10px 4px; border-top:1px solid #f1f5f9;}
+        .tm-name {font-weight:700;}
+        .tm-sub {font-size:0.8rem; color:#6b7280;}
+        .bar {width:100%; height:10px; background:#e5e7eb; border-radius:8px; overflow:hidden;}
+        .bar > div {height:100%; background:#111827; border-radius:8px;}
+        .right {text-align:right;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    colL, colR = st.columns(2)
+    with colL:
+        st.markdown("<div class='panel'>" 
+                    "<h3>🔔 Urgent Feedback Queue</h3>"
+                    "<div class='muted'>Critical issues requiring immediate attention</div>" 
+                    "</div>", unsafe_allow_html=True)
+        urgent = TASKS.urgent_queue(limit=5)
+        if not urgent:
+            st.info("No unresolved issues found.")
+        else:
+            # Build simple table without Priority
+            table_html = ["<table class='table'>",
+                          "<thead><tr><th>Customer</th><th>Issue</th><th class='right'>Assigned To</th></tr></thead>",
+                          "<tbody>"]
+            for it in urgent:
+                cust = it.get("customer", "—")
+                issue = it.get("issue", "—")
+                assigned = it.get("assigned_to", "—")
+                ago = it.get("time_ago", "")
+                table_html.append(
+                    f"<tr><td><div class='tm-name'>{cust}</div><div class='tm-sub'>{ago}</div></td>"
+                    f"<td>{issue}</td>"
+                    f"<td class='right'>{assigned}</td></tr>"
+                )
+            table_html.append("</tbody></table>")
+            st.markdown("\n".join(table_html), unsafe_allow_html=True)
+
+    with colR:
+        st.markdown("<div class='panel'>" 
+                    "<h3>👥 Team Performance</h3>"
+                    "<div class='muted'>Task allocation and performance metrics</div>" 
+                    "</div>", unsafe_allow_html=True)
+        perf = TASKS.team_performance()
+        print(perf)
+        if not perf:
+            st.info("No team tasks available.")
+        else:
+            # Header
+            st.markdown("<table class='table'><thead><tr><th>Team Member</th><th>Tasks</th><th>Completion</th></tr></thead></table>", unsafe_allow_html=True)
+            for row in perf:
+                member = row["name"]
+                dept = row.get("dept", "")
+                assigned = row["assigned"]
+                completed = row["completed"]
+                pct = row["pct"]
+                cols = st.columns([3, 2, 3])
+                with cols[0]:
+                    st.markdown(f"<div class='tm-name'>{member}</div><div class='tm-sub'>{dept}</div>", unsafe_allow_html=True)
+                with cols[1]:
+                    cc1, cc2, cc3 = st.columns([1,1,2])
+                    with cc1:
+                        if st.button("−", key=f"reopen_{row['member_id']}"):
+                            TASKS.reopen_one_task(str(row['member_id']))
+                            st.rerun()
+                    with cc2:
+                        if st.button("+", key=f"close_{row['member_id']}"):
+                            TASKS.close_one_task(str(row['member_id']))
+                            st.rerun()
+                    with cc3:
+                        st.markdown(f"{assigned} assigned · {completed} completed")
+                with cols[2]:
+                    st.markdown(f"<div class='bar'><div style='width:{pct}%;'></div></div>", unsafe_allow_html=True)
 
     # Beauty Sentiment Drivers (computed in calculation.py)
     st.markdown("### Beauty Sentiment Drivers")
