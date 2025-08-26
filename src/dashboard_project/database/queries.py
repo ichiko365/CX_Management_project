@@ -5,7 +5,7 @@ from database.connector import get_db_connection
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def fetch_table(table_name: str = "analysis_results") -> pd.DataFrame:
+def fetch_table(table_name: str = "analysis_results", database_name = "database") -> pd.DataFrame:
     """
     Fetch all rows from the specified table.
 
@@ -15,7 +15,7 @@ def fetch_table(table_name: str = "analysis_results") -> pd.DataFrame:
     Returns:
         DataFrame of results (empty on error or if table has no rows).
     """
-    conn = get_db_connection()
+    conn = get_db_connection(database_name)
     if not conn:
         st.warning("Database connection is not available.")
         return pd.DataFrame()
@@ -47,9 +47,9 @@ def fetch_table(table_name: str = "analysis_results") -> pd.DataFrame:
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def fetch_count(table_name: str = "analysis_results") -> Optional[int]:
+def fetch_count(table_name: str = "analysis_results", database_name = "database") -> Optional[int]:
     """Return COUNT(*) for the specified table, or None on error."""
-    conn = get_db_connection()
+    conn = get_db_connection(database_name)
     if not conn:
         return None
     try:

@@ -146,102 +146,102 @@ components.html(html, height=900, width=1600, scrolling=False)
 
 
 
-import streamlit as st
+# import streamlit as st
 
-# Page config
-st.set_page_config(page_title="Login Page", page_icon="🔒", layout="wide")
+# # Page config
+# st.set_page_config(page_title="Login Page", page_icon="🔒", layout="wide")
 
-# Background and custom CSS
-st.markdown("""
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-        }
-        .stApp {
-            background: url("https://images.unsplash.com/photo-1506748686214-e9df14d4d9d0") no-repeat center center fixed;
-            background-size: cover;
-        }
-        /* make the top Streamlit header transparent so wallpaper shows through */
-        [data-testid="stHeader"], [data-testid="stToolbar"]{
-            background: transparent !important;
-            backdrop-filter: none !important;
-        }
-        /* ensure the main view container doesn't introduce a white background */
-        [data-testid="stAppViewContainer"]{ background: transparent !important; }
-        /* remove excess top padding to eliminate any visible white band */
-        main .block-container{ padding-top: 0.5rem !important; }
-        .glass-card {
-            position: absolute;
-            top: 12vh; /* move slightly down while staying centered */
-            left: 50%;
-            transform: translate(-50%, 0%);
-            background: rgba(255, 255, 255, 0.15);
-            border-radius: 20px;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
-            padding: 3rem 2.5rem;
-            width: 380px;
-            height: auto;
-            text-align: center;
-        }
-        .glass-card h2 {
-            color: white;
-            margin-bottom: 1.5rem;
-        }
-        .glass-card input, .glass-card button {
-            width: 100%;
-            padding: 0.8rem;
-            margin: 0.6rem 0;
-            border-radius: 12px;
-            border: none;
-            outline: none;
-        }
-        .glass-card button {
-            background: rgba(255, 255, 255, 0.7);
-            font-weight: bold;
-            cursor: pointer;
-            transition: 0.3s;
-        }
-        .glass-card button:hover {
-            background: rgba(255, 255, 255, 0.9);
-        }
+# # Background and custom CSS
+# st.markdown("""
+#     <style>
+#         body {
+#             margin: 0;
+#             padding: 0;
+#         }
+#         .stApp {
+#             background: url("https://images.unsplash.com/photo-1506748686214-e9df14d4d9d0") no-repeat center center fixed;
+#             background-size: cover;
+#         }
+#         /* make the top Streamlit header transparent so wallpaper shows through */
+#         [data-testid="stHeader"], [data-testid="stToolbar"]{
+#             background: transparent !important;
+#             backdrop-filter: none !important;
+#         }
+#         /* ensure the main view container doesn't introduce a white background */
+#         [data-testid="stAppViewContainer"]{ background: transparent !important; }
+#         /* remove excess top padding to eliminate any visible white band */
+#         main .block-container{ padding-top: 0.5rem !important; }
+#         .glass-card {
+#             position: absolute;
+#             top: 12vh; /* move slightly down while staying centered */
+#             left: 50%;
+#             transform: translate(-50%, 0%);
+#             background: rgba(255, 255, 255, 0.15);
+#             border-radius: 20px;
+#             backdrop-filter: blur(12px);
+#             -webkit-backdrop-filter: blur(12px);
+#             border: 1px solid rgba(255, 255, 255, 0.3);
+#             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+#             padding: 3rem 2.5rem;
+#             width: 380px;
+#             height: auto;
+#             text-align: center;
+#         }
+#         .glass-card h2 {
+#             color: white;
+#             margin-bottom: 1.5rem;
+#         }
+#         .glass-card input, .glass-card button {
+#             width: 100%;
+#             padding: 0.8rem;
+#             margin: 0.6rem 0;
+#             border-radius: 12px;
+#             border: none;
+#             outline: none;
+#         }
+#         .glass-card button {
+#             background: rgba(255, 255, 255, 0.7);
+#             font-weight: bold;
+#             cursor: pointer;
+#             transition: 0.3s;
+#         }
+#         .glass-card button:hover {
+#             background: rgba(255, 255, 255, 0.9);
+#         }
 
-        /* bottom footer links - fixed so it doesn't disturb layout */
-        .app-footer{
-            position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
-            display: flex; align-items: center; justify-content: space-evenly; gap: 0; flex-wrap: nowrap;
-            width: clamp(480px, 70vw, 700px);
-            padding: 10px 22px; border-radius: 999px;
-            background: rgba(0,0,0,0.28);
-            border: 2px solid rgba(255,255,255,0.25);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            color: #fff; z-index: 1000;
-        }
-        .app-footer a{ color:#f3f6ff; text-decoration: none; font-weight: 600; position: relative; }
-        .app-footer a:hover{ text-decoration: underline; }
-        /* Use CSS-generated separators so spacing stays equal */
-        .app-footer .dot{ display:none; }
-        .app-footer a:not(:last-child)::after{
-            content: "•"; color:#f3f6ff; opacity:.65; margin-left:12px;
-        }
-    </style>
+#         /* bottom footer links - fixed so it doesn't disturb layout */
+#         .app-footer{
+#             position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+#             display: flex; align-items: center; justify-content: space-evenly; gap: 0; flex-wrap: nowrap;
+#             width: clamp(480px, 70vw, 700px);
+#             padding: 10px 22px; border-radius: 999px;
+#             background: rgba(0,0,0,0.28);
+#             border: 2px solid rgba(255,255,255,0.25);
+#             backdrop-filter: blur(8px);
+#             -webkit-backdrop-filter: blur(8px);
+#             color: #fff; z-index: 1000;
+#         }
+#         .app-footer a{ color:#f3f6ff; text-decoration: none; font-weight: 600; position: relative; }
+#         .app-footer a:hover{ text-decoration: underline; }
+#         /* Use CSS-generated separators so spacing stays equal */
+#         .app-footer .dot{ display:none; }
+#         .app-footer a:not(:last-child)::after{
+#             content: "•"; color:#f3f6ff; opacity:.65; margin-left:12px;
+#         }
+#     </style>
 
-    <div class="glass-card">
-        <h2>Login</h2>
-        <input type="text" placeholder="Username">
-        <input type="password" placeholder="Password">
-        <button>Login</button>
-        <p style="color:white; margin-top:1rem;">Don't have an account? <a href="#" style="color:#eee;">Register</a></p>
-    </div>
+#     <div class="glass-card">
+#         <h2>Login</h2>
+#         <input type="text" placeholder="Username">
+#         <input type="password" placeholder="Password">
+#         <button>Login</button>
+#         <p style="color:white; margin-top:1rem;">Don't have an account? <a href="#" style="color:#eee;">Register</a></p>
+#     </div>
 
-    <div class="app-footer">
-        <a href="#about">About us</a>
-        <a href="#contact">Contact us</a>
-        <a href="#privacy">Privacy Policy</a>
-        <a href="#terms">Terms of Service</a>
-    </div>
-""", unsafe_allow_html=True)
+#     <div class="app-footer">
+#         <a href="#about">About us</a>
+#         <a href="#contact">Contact us</a>
+#         <a href="#privacy">Privacy Policy</a>
+#         <a href="#terms">Terms of Service</a>
+#     </div>
+# """, unsafe_allow_html=True)

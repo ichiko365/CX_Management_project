@@ -2,7 +2,7 @@ from typing import List, Tuple
 import re
 from psycopg2.extras import execute_values
 
-from connector import get_db_connection, get_customer_db_connection
+from .connector import get_db_connection, get_customer_db_connection
 
 
 def _sanitize_identifier(name: str) -> str:

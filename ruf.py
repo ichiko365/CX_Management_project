@@ -141,7 +141,7 @@ st.markdown("""
             padding: 0;
         }
         .stApp {
-            background: url("https://images.unsplash.com/photo-1506748686214-e9df14d4d9d0") no-repeat center center fixed;
+            background: url("https://images.unsplash.com/photo-1612817288484-6f916006741a?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D") no-repeat center center fixed;
             background-size: cover;
         }
         /* make the top Streamlit header transparent so wallpaper shows through */
@@ -153,6 +153,12 @@ st.markdown("""
         [data-testid="stAppViewContainer"]{ background: transparent !important; }
         /* remove excess top padding to eliminate any visible white band */
         main .block-container{ padding-top: 0.5rem !important; }
+        /* Floating animation for subtle motion */
+        @keyframes floaty {
+            0% { transform: translate(-50%, 0%) translateY(0); }
+            50% { transform: translate(-50%, 0%) translateY(-6px); }
+            100% { transform: translate(-50%, 0%) translateY(0); }
+        }
         .glass-card {
             position: absolute;
             top: 12vh; /* move slightly down while staying centered */
@@ -165,9 +171,10 @@ st.markdown("""
             border: 1px solid rgba(255, 255, 255, 0.3);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
             padding: 3rem 2.5rem;
-            width: 380px;
+            width: auto;
             height: auto;
             text-align: center;
+            animation: floaty 6s ease-in-out infinite;
         }
         .glass-card h2 {
             color: white;
@@ -198,7 +205,7 @@ st.markdown("""
             padding: 8px 12px;
             border-left: 4px solid #e53935;
             background: rgba(229,57,53,0.15);
-            color: #ffdddd;
+            color: #FFBDB0;
             font-weight: 600;
             border-radius: 8px;
             text-align: left;
@@ -223,6 +230,20 @@ st.markdown("""
         .app-footer a:not(:last-child)::after{
             content: "•"; color:#f3f6ff; opacity:.65; margin-left:12px;
         }
+
+        /* company name at top */
+        .company-name{
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            font-size: 3rem;
+            font-weight: 500;
+            letter-spacing: 3px;
+            text-shadow: 2px 2px 8px rgba(110,90,0,0.5);
+            z-index: 1000;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -240,8 +261,10 @@ if q_user and q_pass:
 
 # Card HTML with optional error message injected (keeps UI intact)
 card_html = """
+    <div class="company-name">method.</div>
+    
     <div class="glass-card">
-        <h2>Login</h2>
+        <h2>Login (Client / Customer)</h2>
         <form id="login-form" method="get">
             <input name="user" id="username" type="text" placeholder="Username">
             <input name="pass" id="password" type="password" placeholder="Password">

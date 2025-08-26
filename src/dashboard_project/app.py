@@ -3,10 +3,8 @@ import pandas as pd
 
 from database.queries import fetch_table, fetch_count
 from processing.calculation import get_filter_options, apply_filters, KpiEngine
-from processing.team_task import TeamTaskService
 
 st.set_page_config(layout="wide")
-TASKS = TeamTaskService()
 
 # THEME: Set colors for background and title gradient — change these to adjust look
 bg_start = "#e5fbff"   #  (background)
@@ -169,7 +167,6 @@ def _compute_kpis_for_dashboard(filtered_df: pd.DataFrame, use_review_date: bool
             "sentiment_score": {"score": sent_score_overall, "delta": None},
             "review_volume": {"count": vol_overall, "delta_pct": None},
             "urgent_issues": {"total": total_u, "critical": critical_u, "high": high_u},
-            "team_utilization": None,
         }
     else:
         engine = KpiEngine(filtered_df)
@@ -296,10 +293,6 @@ def _dashboard_page():
     crit = int(urg.get("critical", 0) or 0)
     high = int(urg.get("high", 0) or 0)
 
-    team_val = k.get("team_utilization")
-    team_val_html = f"{team_val:.0f}%" if team_val else "—"
-    team_delta_html = ""  # no change to logic; leave blank if not available
-
     # Build gauge KPI for Sentiment Average (normalize 0..10 -> -1..1)
     _norm = None
     if sent_score is not None:
@@ -349,7 +342,7 @@ def _dashboard_page():
 
     # Construct KPI grid HTML without indent so Markdown doesn't treat as code
     kpi_grid_html = (
-        "<div class='metric-grid'>"
+        "<div class='metric-grid' style='grid-template-columns:repeat(3, minmax(200px, 1fr));'>"
         f"{gauge_card_html}"
     "<div class='card soft center'>"
     "<div>Review Volume</div>"
@@ -370,11 +363,6 @@ def _dashboard_page():
     f"</div>"
     f"</div>"
     "</div>"
-        "<div class='card soft'>"
-        "<div>Team Utilization</div>"
-        f"<p class='kpi-value'>{team_val_html}</p>"
-        f"<div class='kpi-sub'>{team_delta_html}</div>"
-        "</div>"
         "</div>"
     )
 
@@ -542,91 +530,6 @@ def _dashboard_page():
                         st.info("Install folium or pydeck to see the map.")
             else:
                 st.info("No region column available to map.")
-
-    # --- Team Ops Panels (Urgent Feedback Queue + Team Performance) ---
-    st.markdown("### Team Operations")
-    st.caption("Urgent feedback and team task performance")
-    # CSS for panels and progress
-    st.markdown(
-        """
-        <style>
-        .panel {background:#ffffff; border:1px solid #e5e7eb; border-radius:16px; padding:0.8rem 1rem; box-shadow:0 1px 4px rgba(0,0,0,0.05);} 
-        .panel h3 {margin:0 0 0.25rem 0; font-weight:800;}
-        .muted {color:#6b7280; font-size:0.9rem; margin-bottom:0.5rem;}
-        .table {width:100%; border-collapse:collapse;}
-        .table th {text-align:left; color:#374151; font-weight:700; padding:8px 4px;}
-        .table td {padding:10px 4px; border-top:1px solid #f1f5f9;}
-        .tm-name {font-weight:700;}
-        .tm-sub {font-size:0.8rem; color:#6b7280;}
-        .bar {width:100%; height:10px; background:#e5e7eb; border-radius:8px; overflow:hidden;}
-        .bar > div {height:100%; background:#111827; border-radius:8px;}
-        .right {text-align:right;}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    colL, colR = st.columns(2)
-    with colL:
-        st.markdown("<div class='panel'>" 
-                    "<h3>🔔 Urgent Feedback Queue</h3>"
-                    "<div class='muted'>Critical issues requiring immediate attention</div>" 
-                    "</div>", unsafe_allow_html=True)
-        urgent = TASKS.urgent_queue(limit=5)
-        if not urgent:
-            st.info("No unresolved issues found.")
-        else:
-            # Build simple table without Priority
-            table_html = ["<table class='table'>",
-                          "<thead><tr><th>Customer</th><th>Issue</th><th class='right'>Assigned To</th></tr></thead>",
-                          "<tbody>"]
-            for it in urgent:
-                cust = it.get("customer", "—")
-                issue = it.get("issue", "—")
-                assigned = it.get("assigned_to", "—")
-                ago = it.get("time_ago", "")
-                table_html.append(
-                    f"<tr><td><div class='tm-name'>{cust}</div><div class='tm-sub'>{ago}</div></td>"
-                    f"<td>{issue}</td>"
-                    f"<td class='right'>{assigned}</td></tr>"
-                )
-            table_html.append("</tbody></table>")
-            st.markdown("\n".join(table_html), unsafe_allow_html=True)
-
-    with colR:
-        st.markdown("<div class='panel'>" 
-                    "<h3>👥 Team Performance</h3>"
-                    "<div class='muted'>Task allocation and performance metrics</div>" 
-                    "</div>", unsafe_allow_html=True)
-        perf = TASKS.team_performance()
-        print(perf)
-        if not perf:
-            st.info("No team tasks available.")
-        else:
-            # Header
-            st.markdown("<table class='table'><thead><tr><th>Team Member</th><th>Tasks</th><th>Completion</th></tr></thead></table>", unsafe_allow_html=True)
-            for row in perf:
-                member = row["name"]
-                dept = row.get("dept", "")
-                assigned = row["assigned"]
-                completed = row["completed"]
-                pct = row["pct"]
-                cols = st.columns([3, 2, 3])
-                with cols[0]:
-                    st.markdown(f"<div class='tm-name'>{member}</div><div class='tm-sub'>{dept}</div>", unsafe_allow_html=True)
-                with cols[1]:
-                    cc1, cc2, cc3 = st.columns([1,1,2])
-                    with cc1:
-                        if st.button("−", key=f"reopen_{row['member_id']}"):
-                            TASKS.reopen_one_task(str(row['member_id']))
-                            st.rerun()
-                    with cc2:
-                        if st.button("+", key=f"close_{row['member_id']}"):
-                            TASKS.close_one_task(str(row['member_id']))
-                            st.rerun()
-                    with cc3:
-                        st.markdown(f"{assigned} assigned · {completed} completed")
-                with cols[2]:
-                    st.markdown(f"<div class='bar'><div style='width:{pct}%;'></div></div>", unsafe_allow_html=True)
 
     # Beauty Sentiment Drivers (computed in calculation.py)
     st.markdown("### Beauty Sentiment Drivers")

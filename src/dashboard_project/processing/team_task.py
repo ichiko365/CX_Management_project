@@ -1,225 +1,282 @@
-from __future__ import annotations
+import pandas as pd
+import streamlit as st
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional
+import sys
+import os
 
-from typing import Any, Dict, List, Optional, Callable
-import json
-from datetime import datetime, timezone
+# Add the parent directory to sys.path to import from database module
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    from database.connector import get_db_connection
-except ModuleNotFoundError:  # allow running this file directly
-    import sys
-    from pathlib import Path
-    root = Path(__file__).resolve().parents[1]  # src/dashboard_project
-    if str(root) not in sys.path:
-        sys.path.append(str(root))
-    from database.connector import get_db_connection
+from database.queries import fetch_table
+from database.complaints import sync_to_main_database
 
 
-class TeamTaskService:
-    """Service for reading/aggregating and mutating team tasks from complaints table."""
+def refresh_complaints_data() -> bool:
+    """
+    Refresh the complaints table by syncing data from customer database.
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        rows_synced = sync_to_main_database("complaints")
+        st.success(f"Successfully synced {rows_synced} rows to complaints table")
+        return True
+    except Exception as e:
+        st.error(f"Failed to refresh complaints data: {e}")
+        return False
 
-    def __init__(
-        self,
-        connection_getter: Callable[[str], Any] = get_db_connection,
-        db_key: str = "database",
-        table: str = "complaints",
-    ) -> None:
-        self._get_conn = connection_getter
-        self._db_key = db_key
-        self._table = table
 
-    # ------------------------- helpers -------------------------
-    @staticmethod
-    def _norm_status(s: Optional[str]) -> str:
-        if not s:
-            return "open"
-        s = str(s).strip().lower()
-        if s.startswith("resolv") or s.startswith("clos") or s in {"done", "complete", "completed"}:
-            return "resolved"
-        return "open"
+def get_complaints_data() -> pd.DataFrame:
+    """
+    Fetch complaints data from the database.
+    
+    Returns:
+        pd.DataFrame: Complaints data
+    """
+    try:
+        df = fetch_table("complaints", "database")
+        if df.empty:
+            st.warning("No complaints data found. Try refreshing the data.")
+        return df
+    except Exception as e:
+        st.error(f"Error fetching complaints data: {e}")
+        return pd.DataFrame()
 
-    @staticmethod
-    def _parse_dt(val: Optional[str]) -> Optional[datetime]:
-        if not val:
-            return None
-        s = str(val).strip()
-        # Try multiple formats; fallback to None
-        fmts = (
-            "%Y-%m-%d %H:%M:%S%z",
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%d",
-            "%m/%d/%Y %H:%M:%S",
-            "%m/%d/%Y",
-        )
-        for fmt in fmts:
-            try:
-                dt = datetime.strptime(s, fmt)
-                if not dt.tzinfo:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                return dt
-            except Exception:
-                continue
-        try:
-            dt = datetime.fromisoformat(s)
-            if not dt.tzinfo:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
-        except Exception:
-            return None
 
-    @staticmethod
-    def _time_ago_str(dt: Optional[datetime]) -> str:
-        if not dt:
-            return ""
-        now = datetime.now(timezone.utc)
-        diff = now - dt
-        seconds = int(diff.total_seconds())
-        if seconds < 60:
-            return f"{seconds}s ago"
-        mins = seconds // 60
-        if mins < 60:
-            return f"{mins}m ago"
-        hours = mins // 60
-        if hours < 24:
+def categorize_priority(status: str, created_at: str) -> str:
+    """
+    Categorize priority based on status and how old the complaint is.
+    
+    Args:
+        status: Current status of the complaint
+        created_at: When the complaint was created
+        
+    Returns:
+        str: Priority level (Critical, High, Medium, Low)
+    """
+    try:
+        # Parse the created_at timestamp
+        if isinstance(created_at, str):
+            # Try different datetime formats
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S']:
+                try:
+                    created_time = datetime.strptime(created_at, fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                # If all formats fail, assume it's recent
+                created_time = datetime.now() - timedelta(hours=1)
+        else:
+            created_time = created_at
+        
+        # Calculate age in hours
+        age_hours = (datetime.now() - created_time).total_seconds() / 3600
+        
+        # Priority logic
+        if status and status.lower() in ['urgent', 'critical', 'escalated']:
+            return 'Critical'
+        elif age_hours < 2:  # Less than 2 hours old
+            return 'Critical'
+        elif age_hours < 6:  # Less than 6 hours old
+            return 'High'
+        elif age_hours < 24:  # Less than 24 hours old
+            return 'Medium'
+        else:
+            return 'Low'
+            
+    except Exception:
+        return 'Medium'  # Default priority
+
+
+def get_time_ago(created_at: str) -> str:
+    """
+    Convert timestamp to 'X hours ago' format.
+    
+    Args:
+        created_at: Timestamp string
+        
+    Returns:
+        str: Human readable time difference
+    """
+    try:
+        if isinstance(created_at, str):
+            # Try different datetime formats
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S']:
+                try:
+                    created_time = datetime.strptime(created_at, fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                return "Unknown"
+        else:
+            created_time = created_at
+        
+        # Calculate time difference
+        diff = datetime.now() - created_time
+        
+        if diff.days > 0:
+            return f"{diff.days}d ago"
+        elif diff.seconds > 3600:
+            hours = diff.seconds // 3600
             return f"{hours}h ago"
-        days = hours // 24
-        return f"{days}d ago"
+        elif diff.seconds > 60:
+            minutes = diff.seconds // 60
+            return f"{minutes}m ago"
+        else:
+            return "Just now"
+            
+    except Exception:
+        return "Unknown"
 
-    # ------------------------- data access ---------------------
-    def fetch_all(self) -> List[Dict[str, Any]]:
-        conn = self._get_conn(self._db_key)
-        if not conn:
-            return []
+
+def process_urgent_feedback_queue(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Process complaints data to create urgent feedback queue.
+    
+    Args:
+        df: Raw complaints dataframe
+        
+    Returns:
+        pd.DataFrame: Processed urgent feedback queue
+    """
+    if df.empty:
+        return pd.DataFrame()
+    
+    try:
+        # Create a copy to avoid modifying original
+        processed_df = df.copy()
+        
+        # Add priority column
+        processed_df['priority'] = processed_df.apply(
+            lambda row: categorize_priority(
+                row.get('status', ''), 
+                row.get('created_at', '')
+            ), axis=1
+        )
+        
+        # Add time_ago column
+        processed_df['time_ago'] = processed_df['created_at'].apply(get_time_ago)
+        
+        # Filter for urgent items (Critical and High priority)
+        urgent_df = processed_df[processed_df['priority'].isin(['Critical', 'High'])].copy()
+        
+        # Sort by priority (Critical first) and then by creation time (newest first)
+        priority_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
+        urgent_df['priority_rank'] = urgent_df['priority'].map(priority_order)
+        
+        # Convert created_at to datetime for proper sorting
         try:
-            with conn.cursor() as cur:
-                cur.execute(f'SELECT * FROM "{self._table}";')
-                cols = [d[0] for d in cur.description]
-                rows = cur.fetchall()
-                return [{cols[i]: r[i] for i in range(len(cols))} for r in rows]
+            urgent_df['created_at_dt'] = pd.to_datetime(urgent_df['created_at'], errors='coerce')
+            urgent_df = urgent_df.sort_values(['priority_rank', 'created_at_dt'], ascending=[True, False])
         except Exception:
-            return []
-        finally:
+            urgent_df = urgent_df.sort_values('priority_rank', ascending=True)
+        
+        # Select and rename columns for display
+        display_columns = {
+            'user_name': 'Customer',
+            'summary': 'Issue', 
+            'priority': 'Priority',
+            'team_member_name': 'Assigned To',
+            'time_ago': 'Time'
+        }
+        
+        # Only keep columns that exist in the dataframe
+        available_columns = {k: v for k, v in display_columns.items() if k in urgent_df.columns}
+        
+        if available_columns:
+            result_df = urgent_df[list(available_columns.keys())].rename(columns=available_columns)
+        else:
+            # Fallback if expected columns don't exist
+            result_df = urgent_df.copy()
+        
+        return result_df.head(20)  # Return top 20 urgent items
+        
+    except Exception as e:
+        st.error(f"Error processing urgent feedback queue: {e}")
+        return pd.DataFrame()
+
+
+def get_team_performance_metrics(df: pd.DataFrame) -> Dict:
+    """
+    Calculate team performance metrics from complaints data.
+    
+    Args:
+        df: Complaints dataframe
+        
+    Returns:
+        dict: Performance metrics
+    """
+    if df.empty:
+        return {}
+    
+    try:
+        metrics = {}
+        
+        # Total complaints
+        metrics['total_complaints'] = len(df)
+        
+        # Complaints by status
+        if 'status' in df.columns:
+            status_counts = df['status'].value_counts().to_dict()
+            metrics['status_breakdown'] = status_counts
+        
+        # Complaints by team member
+        if 'team_member_name' in df.columns:
+            team_counts = df['team_member_name'].value_counts().to_dict()
+            metrics['team_workload'] = team_counts
+        
+        # Complaints by department
+        if 'department_name' in df.columns:
+            dept_counts = df['department_name'].value_counts().to_dict()
+            metrics['department_breakdown'] = dept_counts
+        
+        # Recent complaints (last 24 hours)
+        if 'created_at' in df.columns:
             try:
-                conn.close()
+                df['created_at_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
+                recent_threshold = datetime.now() - timedelta(days=1)
+                recent_complaints = df[df['created_at_dt'] >= recent_threshold]
+                metrics['recent_complaints'] = len(recent_complaints)
             except Exception:
-                pass
+                metrics['recent_complaints'] = 0
+        
+        return metrics
+        
+    except Exception as e:
+        st.error(f"Error calculating team metrics: {e}")
+        return {}
 
-    # ------------------------- queries -------------------------
-    def urgent_queue(self, limit: int = 5) -> List[Dict[str, Any]]:
-        """Return open issues only, sorted by created_at desc when available."""
-        items = self.fetch_all()
-        enriched: List[Dict[str, Any]] = []
-        for row in items:
-            if self._norm_status(str(row.get("status") or "")) != "open":
-                continue
-            issue = row.get("id") or "Issue"
-            customer = row.get("user_name") or "—"
-            assigned_to = row.get("team_member_name") or "—"
-            when_raw = row.get("created_at")
-            dt = self._parse_dt(when_raw if when_raw is not None else None)
-            enriched.append(
-                {
-                    "issue": str(issue),
-                    "customer": str(customer),
-                    "assigned_to": str(assigned_to),
-                    "time_ago": self._time_ago_str(dt),
-                    "_dt": dt,
-                }
-            )
-        # sort by datetime desc when present
-        enriched.sort(key=lambda x: (x.get("_dt") is None, x.get("_dt") or datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
-        # strip helper key and return top N
-        out = [{k: v for k, v in d.items() if k != "_dt"} for d in enriched[: max(0, int(limit))]]
-        return out
 
-    def team_performance(self) -> List[Dict[str, Any]]:
-        items = self.fetch_all()
-        by_member: Dict[str, Dict[str, Any]] = {}
-        for row in items:
-            member_id = str(row.get("team_member_id") or "-")
-            member_name = str(row.get("team_member_name") or "Unknown")
-            dept = str(row.get("department_name") or "")
-            status = self._norm_status(str(row.get("status") or ""))
-            agg = by_member.setdefault(
-                member_id,
-                {"member_id": member_id, "name": member_name, "dept": dept, "assigned": 0, "completed": 0},
-            )
-            agg["assigned"] += 1
-            if status == "resolved":
-                agg["completed"] += 1
-        out: List[Dict[str, Any]] = []
-        for agg in by_member.values():
-            assigned = int(agg["assigned"]) or 0
-            completed = int(agg["completed"]) or 0
-            pct = int(round((completed / assigned) * 100)) if assigned > 0 else 0
-            out.append(
-                {
-                    "member_id": agg["member_id"],
-                    "name": agg["name"],
-                    "dept": agg["dept"],
-                    "assigned": assigned,
-                    "completed": completed,
-                    "pct": pct,
-                }
-            )
-        out.sort(key=lambda x: (-x["assigned"], x["name"]))
-        return out
-
-    # ------------------------- mutations -----------------------
-    def close_one_task(self, member_id: str) -> bool:
-        conn = self._get_conn(self._db_key)
-        if not conn:
-            return False
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        'SELECT "id" FROM "{table}" WHERE "team_member_id"=%s '
-                        'AND LOWER(COALESCE("status","")) NOT LIKE %s '
-                        'AND LOWER(COALESCE("status","")) NOT LIKE %s '
-                        'AND LOWER(COALESCE("status","")) NOT IN (%s, %s, %s) '
-                        'ORDER BY "created_at" DESC NULLS LAST LIMIT 1;'.format(table=self._table),
-                        (member_id, 'resolv%', 'clos%', 'done', 'complete', 'completed'),
-                    )
-                    row = cur.fetchone()
-                    if not row:
-                        return False
-                    task_id = row[0]
-                    cur.execute(f'UPDATE "{self._table}" SET "status"=%s WHERE "id"=%s;', ("resolved", task_id))
-            return True
-        except Exception:
-            return False
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    def reopen_one_task(self, member_id: str) -> bool:
-        conn = self._get_conn(self._db_key)
-        if not conn:
-            return False
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        'SELECT "id" FROM "{table}" WHERE "team_member_id"=%s '
-                        'AND (LOWER(COALESCE("status","")) LIKE %s '
-                        'OR LOWER(COALESCE("status","")) LIKE %s '
-                        'OR LOWER(COALESCE("status","")) IN (%s, %s, %s)) '
-                        'ORDER BY "created_at" DESC NULLS LAST LIMIT 1;'.format(table=self._table),
-                        (member_id, 'resolv%', 'clos%', 'done', 'complete', 'completed'),
-                    )
-                    row = cur.fetchone()
-                    if not row:
-                        return False
-                    task_id = row[0]
-                    cur.execute(f'UPDATE "{self._table}" SET "status"=%s WHERE "id"=%s;', ("open", task_id))
-            return True
-        except Exception:
-            return False
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+def get_urgent_queue_summary(df: pd.DataFrame) -> Dict:
+    """
+    Get summary statistics for urgent queue.
+    
+    Args:
+        df: Processed urgent queue dataframe
+        
+    Returns:
+        dict: Summary statistics
+    """
+    if df.empty:
+        return {'critical_count': 0, 'high_count': 0, 'total_urgent': 0}
+    
+    try:
+        summary = {}
+        
+        if 'Priority' in df.columns:
+            priority_counts = df['Priority'].value_counts()
+            summary['critical_count'] = priority_counts.get('Critical', 0)
+            summary['high_count'] = priority_counts.get('High', 0)
+            summary['total_urgent'] = len(df)
+        else:
+            summary = {'critical_count': 0, 'high_count': 0, 'total_urgent': len(df)}
+        
+        return summary
+        
+    except Exception as e:
+        st.error(f"Error getting urgent queue summary: {e}")
+        return {'critical_count': 0, 'high_count': 0, 'total_urgent': 0}
