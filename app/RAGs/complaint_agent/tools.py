@@ -177,14 +177,14 @@ def log_complaint_to_db(order_id: str, department: str, complaint_details: str) 
     """
     
     
-    # llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    llm = ChatOpenAI(
-        model="meta-llama/llama-3-70b-instruct",
-        openai_api_base="https://openrouter.ai/api/v1",
-        openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-        temperature=0.2,
-        max_tokens=1024
-    )
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    # llm = ChatOpenAI(
+    #     model="meta-llama/llama-3-70b-instruct",
+    #     openai_api_base="https://openrouter.ai/api/v1",
+    #     openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+    #     temperature=0.2,
+    #     max_tokens=1024
+    # )
     summary_prompt = f"Summarize this complaint in 1-2 sentences: {complaint_details}"
     response = llm.invoke([HumanMessage(content=summary_prompt)])
     complaint_summary = response.content

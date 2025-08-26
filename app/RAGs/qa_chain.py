@@ -216,15 +216,15 @@ def get_faq_guidance(question: str, k: int = 3) -> str:
 
 def _llm() -> ChatOpenAI:
 	# Do not change user's model: allow override via env, fallback is safe
-	# model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
-	# return ChatOpenAI(model=model, temperature=0.2)
-	return ChatOpenAI(
-		model="meta-llama/llama-3-70b-instruct",
-		openai_api_base="https://openrouter.ai/api/v1",
-		openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-		temperature=0.2,
-		max_tokens=1024
-	)
+	model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
+	return ChatOpenAI(model=model, temperature=0.2)
+	# return ChatOpenAI(
+	# 	model="meta-llama/llama-3-70b-instruct",
+	# 	openai_api_base="https://openrouter.ai/api/v1",
+	# 	openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+	# 	temperature=0.2,
+	# 	max_tokens=1024
+	# )
 
 def _resolve_product(query: str) -> Tuple[Optional[str], Optional[str], float]:
 	"""Resolve a product mention to (ASIN, Title, score) using the catalog index.

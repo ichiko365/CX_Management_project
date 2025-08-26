@@ -1,6 +1,6 @@
 
-from .complaint_handler import ComplaintHandler
-from .making_database_for_agent import setup_agent_tables, setup_task_tables
+from complaint_agent.complaint_handler import ComplaintHandler
+from complaint_agent.making_database_for_agent import setup_agent_tables, setup_task_tables
 
 
 

@@ -64,16 +64,16 @@ def _ensure_openrouter_api_key() -> None:
 def _llm() -> ChatOpenAI:
 	_ensure_openrouter_api_key()
 	# Use OpenRouter with Llama 70B
-	# model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
+	model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
 	# Tool-calling enabled by default for OpenAI Chat models via LangChain
-	# return ChatOpenAI(model=model, temperature=0.2)
-	return ChatOpenAI(
-		model="meta-llama/llama-3-70b-instruct",
-		openai_api_base="https://openrouter.ai/api/v1",
-		openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-		temperature=0.2,
-		max_tokens=1024
-	)
+	return ChatOpenAI(model=model, temperature=0.2)
+	# return ChatOpenAI(
+	# 	model="meta-llama/llama-3-70b-instruct",
+	# 	openai_api_base="https://openrouter.ai/api/v1",
+	# 	openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+	# 	temperature=0.2,
+	# 	max_tokens=1024
+	# )
 
 # def _llm() -> ChatOllama:
 # 	model = os.getenv("OLLAMA_MODEL", "llama3")
