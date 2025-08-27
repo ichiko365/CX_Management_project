@@ -42,6 +42,48 @@ st.markdown(
 	}
 	.media-frame img { width: 100%; height: 100%; object-fit: contain; object-position: center; display: block; }
 	.media-frame iframe { width: 100% !important; height: 100% !important; border: 0; display:block; }
+	
+	/* Ensure consistent height for image and video containers */
+	[data-testid="stImage"] > img {
+	  height: 300px !important;
+	  object-fit: contain !important;
+	  width: 100% !important;
+	}
+	
+	[data-testid="stVideo"] > video {
+	  height: 300px !important;
+	  object-fit: contain !important;
+	  width: 100% !important;
+	}
+
+	/* Nudge header video down a bit so its visual center aligns with the image */
+	.media-shift { margin-top: 105px; }
+
+	/* Center the video caption and add a 90px gap from the video - using multiple selectors */
+	.media-shift [data-testid="stCaptionContainer"] {
+	  margin-top: 90px !important;
+	  text-align: center !important;
+	  width: 100% !important;
+	  display: block !important;
+	}
+	.media-shift [data-testid="stCaptionContainer"] p {
+	  text-align: center !important;
+	  margin: 0 auto !important;
+	}
+	
+	/* Alternative selector in case the above doesn't work */
+	.media-shift .stCaption {
+	  margin-top: 90px !important;
+	  text-align: center !important;
+	  width: 100% !important;
+	}
+	
+	/* Another alternative - target any element containing "Product Video" */
+	.media-shift *:contains("Product Video") {
+	  text-align: center !important;
+	  margin-top: 90px !important;
+	  width: 100% !important;
+	}
 	</style>
 	""",
 	unsafe_allow_html=True,
@@ -625,25 +667,53 @@ if not backend_ok:
 
 
 def page_dashboard():
+	# ----------------------- SIDEBAR ADS (Dashboard Only) ---------------------------
+	with st.sidebar:
+		st.markdown("### 🎯 Featured Product")
+		st.markdown("---")
+		
+		# Product Image Ad
+		st.image("../Media/Product.png", caption="✨ Premium Beauty Product", use_container_width=True)
+		st.markdown(
+			"""
+			<div style='text-align: center; padding: 10px; background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 50%, #fecfef 100%); 
+			border-radius: 10px; margin: 10px 0;'>
+				<h4 style='color: #333; margin: 5px 0;'>🌟 Special Offer!</h4>
+				<p style='color: #555; margin: 5px 0; font-size: 14px;'>Get 20% off on this amazing product</p>
+			</div>
+			""", 
+			unsafe_allow_html=True
+		)
+		
+		# Product Video Ad
+		st.markdown("#### 📹 See it in Action")
+		st.video("../Media/Product_Video.mp4")
+		st.markdown(
+			"""
+			<div style='text-align: center; padding: 8px; background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); 
+			border-radius: 10px; margin: 10px 0;'>
+				<p style='color: #333; margin: 5px 0; font-size: 12px;'>💝 Watch our product demo above!</p>
+			</div>
+			""", 
+			unsafe_allow_html=True
+		)
+		
+		st.markdown("---")
+	
 	# ----------------------- Header ---------------------------
 	st.title("CX Management")
 
-	left, right = st.columns(2, gap="large")
+	left, right = st.columns(2, gap="small")
 	with left:
-		st.markdown(
-			'''
-			<div class="media-frame">
-			  <img src="https://res.retailershakti.com/incom/images/product/Lakme-Face-Sheer-Sun-Kissed-1602502094-10039240-2.jpg" alt="Luminous Glow Serum" />
-			</div>
-			''',
-			unsafe_allow_html=True,
-		)
+		# Display product image from local Media folder with fixed height
+		st.image("../Media/Product.png", caption="Product Image", use_container_width=True, width=None)
+		
 	with right:
-		html = youtube_embed("https://youtu.be/AvpPocRT3JU?si=HujZcx88Qm-Fs-f2")
-		if html:
-			st.markdown(html, unsafe_allow_html=True)
-		else:
-			st.video("https://youtu.be/AvpPocRT3JU?si=HujZcx88Qm-Fs-f2")
+		# Display product video from local Media folder with caption and slight vertical offset
+		st.markdown('<div class="media-shift">', unsafe_allow_html=True)
+		st.video("../Media/Product_Video.mp4")
+		st.markdown('<div style="margin-top: 110px; text-align: center; width: 100%;"><p style="text-align: center; margin: 0; color: rgb(49, 51, 63); font-size: 14px; line-height: 1.6;">Product Video</p></div>', unsafe_allow_html=True)
+		st.markdown('</div>', unsafe_allow_html=True)
 
 	st.markdown("---")
 
@@ -654,7 +724,6 @@ def page_dashboard():
 	container_ctx = stylable_container("review_form_card", css_styles="") if stylable_container else st.container()
 
 	with container_ctx:
-		st.markdown('<div class="main-card">', unsafe_allow_html=True)
 		# Apply any pending prefill BEFORE creating widgets
 		_pending = st.session_state.pop("_pending_prefill", None)
 		if _pending:
@@ -684,7 +753,12 @@ def page_dashboard():
 				idx = options.index(choice) - 1
 				if 0 <= idx < len(suggestions):
 					selected = suggestions[idx]
-		if selected:
+		
+		# Only auto-apply selection if user explicitly chose from dropdown AND we're not in a rerun loop
+		if selected and not st.session_state.get("_applying_suggestion", False):
+			# Set flag to prevent rerun loops
+			st.session_state["_applying_suggestion"] = True
+			
 			# Store resolved ASIN/Description for submit
 			st.session_state["_resolved_from_suggestion"] = {
 				"ASIN": selected.get("ASIN"),
@@ -703,6 +777,9 @@ def page_dashboard():
 			st.session_state["_pending_prefill"] = {"title": selected_title, "desc": selected_desc}
 			st.caption(f"Selected: {selected_title} · ASIN: {selected.get('ASIN')}")
 			st.rerun()
+		elif st.session_state.get("_applying_suggestion", False):
+			# Clear the flag after rerun to allow future selections
+			st.session_state["_applying_suggestion"] = False
 
 		with st.form("add_review_form", clear_on_submit=True):
 			cols = st.columns([1, 1])
@@ -745,6 +822,16 @@ def page_dashboard():
 		if from_sess and from_sess.get("ASIN"):
 			resolved_asin = from_sess.get("ASIN")
 			resolved_desc = from_sess.get("Description")
+		# If user didn't explicitly select but there's exactly one live suggestion, use it as a fallback
+		elif "suggestions" in locals() and isinstance(suggestions, list) and len(suggestions) == 1:
+			_only = suggestions[0] or {}
+			sa = (_only.get("ASIN") or "").strip()
+			if sa:
+				resolved_asin = sa
+				resolved_desc = _only.get("Description")
+				# Optionally sync the title to the suggested one if present
+				if _only.get("Title"):
+					st.session_state["title_input"] = _only.get("Title")
 		elif title:
 			lookup = _lookup_asin_description_by_title(title)
 			if lookup and lookup.get("ASIN"):

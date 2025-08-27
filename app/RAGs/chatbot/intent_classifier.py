@@ -35,45 +35,101 @@ class IntentRouter:
         self.state = self._load_conversation_state()
         
         # Updated route instructions with context awareness
-        self.route_instructions = """You are managing a customer service system that handles multiple types of requests.
-The system has access to conversation history and can reference previous interactions.
+        self.route_instructions = """You are managing a customer service system that handles multiple types of user interactions. The system has access to full conversation history and can reference previous interactions to provide context-aware support.
 
-(1) Complaints: When customers have issues with orders, billing problems, technical issues, 
-    product quality concerns, or want to file formal complaints that need to be logged and tracked.
-    Can also reference previous complaints or ask about status of past complaints.
+Your task is to analyze the user's message and classify their intent into one of the following five categories:
 
-(2) Q&A: General questions about products (especially beauty products), product recommendations, 
-    comparisons, general conversation, greetings, or informational queries.
-    Can reference previous conversations and provide context-aware responses.
+(1) complaint
 
-(3) Abort: When the user wants to stop the current complaint process and switch to general Q&A 
-    without completing the complaint. Look for phrases like "stop", "cancel", "never mind", 
-    "forget it", "I changed my mind", "let's do something else".
+Classify as complaint when the user is:
 
-(4) Reset: When the user wants to completely reset the conversation and start fresh. 
-    Look for phrases like "start over", "reset", "clear history", "begin again", "new conversation".
+Reporting a problem with an order, billing, delivery, or product.
 
-(5) Exit: When the user wants to end the conversation completely.
+Experiencing technical issues or product quality concerns.
 
-Based on the conversation context and history, determine the user's intent:
+Wanting to file a formal complaint that needs to be logged and tracked.
 
-- Return 'complaint' if they are reporting a problem, have an issue with an order, 
-  want to file a complaint, need assistance with a specific problem that requires logging,
-  or asking about previous complaints.
-  
-- Return 'qna' if they are asking general questions, seeking product information, 
-  making casual conversation, need general assistance, or referencing previous conversations.
+Asking for updates on a previously submitted complaint.
 
-- Return 'abort' if they want to stop the current complaint process and switch to Q&A.
+Referring to a past complaint or issue in a way that requires follow-up.
 
-- Return 'reset' if they want to completely reset the conversation history.
+Important: If the user starts a complaint and then writes "yes" after being asked to confirm, treat that as an indicator to stop the complaint process and switch to qna instead.
 
-- Return 'exit' if they want to end the conversation.
+(2) qna
 
-Important: The system can access conversation history, so users can reference previous interactions.
-Consider this context when classifying intent.
+Classify as qna when the user is:
 
-Do NOT try to respond to the user. Just classify the intent."""
+Asking general questions (especially about beauty products).
+
+Seeking product recommendations or comparisons.
+
+Making casual conversation or greetings.
+
+Asking informational or exploratory queries.
+
+Referring to previous general conversations.
+
+Switching from a complaint to general questions (see “yes” confirmation note under (1)).
+
+(3) abort
+
+Classify as abort when the user wants to stop the complaint process without completing it, and switch to general Q&A.
+
+Look for phrases like:
+
+"stop"
+
+"cancel"
+
+"never mind"
+
+"forget it"
+
+"I changed my mind"
+
+"let's do something else"
+
+(4) reset
+
+Classify as reset when the user wants to completely reset the conversation, erase history, and start fresh.
+
+Look for phrases like:
+
+"start over"
+
+"reset"
+
+"clear history"
+
+"begin again"
+
+"new conversation"
+
+(5) exit
+
+Classify as exit when the user clearly wants to end the conversation entirely.
+
+Look for phrases like:
+
+"bye"
+
+"goodbye"
+
+"exit"
+
+"quit"
+
+"end this"
+
+"stop talking"
+
+Additional Instructions
+
+Always consider the entire conversation history when determining intent.
+
+Do not respond to the user or generate a reply. Simply return the classification.
+
+Output one of the following exactly: complaint, qna, abort, reset, exit."""
 
     def _init_database(self):
         """Initialize database tables for conversation history."""

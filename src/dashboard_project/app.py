@@ -1,8 +1,18 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 
 from database.queries import fetch_table, fetch_count
 from processing.calculation import get_filter_options, apply_filters, KpiEngine
+from processing.team_task import (
+    get_complaints_data,
+    refresh_complaints_data,
+    process_urgent_feedback_queue,
+    get_team_performance_metrics,
+    get_urgent_queue_summary,
+    get_team_performance_data,
+    calculate_team_efficiency
+)
 
 st.set_page_config(layout="wide")
 
@@ -370,7 +380,7 @@ def _dashboard_page():
 
     # Historical Sentiment Trend (left) and Region Map (right)
     st.markdown("### Historical")
-    st.caption("Left: sentiment trend • Right: review density by region")
+    st.caption("Left: urgency score distribution • Right: review density by region")
     trend_container = st.container()
     with trend_container:
         # Align trend data with the period selection when not using Review Date
@@ -385,49 +395,81 @@ def _dashboard_page():
 
         left_col, right_col = st.columns(2)
 
-    # --- Left: Altair area+line (blue palette) for better blending ---
+    # --- Left: Urgency Score Distribution Bar Chart ---
         with left_col:
-            trend_engine = KpiEngine(trend_source_df)
-            trend_fn = getattr(trend_engine, "sentiment_trend", None)
-            trend_freq = "M" if (use_review_date or period_days > 30) else "W"
-            trend_df = trend_fn(freq=trend_freq, smoothing_window=smoothing_window) if callable(trend_fn) else None
-            if trend_df is not None and not trend_df.empty:
+            if trend_source_df is not None and not trend_source_df.empty and "urgency_score" in trend_source_df.columns:
                 try:
                     import altair as alt  # lazy import
-                    # Ensure datetime type for Altair
-                    tdf = trend_df.copy()
-                    tdf["period"] = pd.to_datetime(tdf["period"], errors="coerce")
-
-                    base = alt.Chart(tdf).encode(
-                        x=alt.X("period:T", title="Date"),
-                        y=alt.Y("smoothed:Q", title="Sentiment", scale=alt.Scale(domain=[0, 10]))
-                    )
-                    area = base.mark_area(
-                        color=alt.Gradient(
-                            gradient="linear",
-                            stops=[
-                                alt.GradientStop(color="#60a5fa33", offset=0),
-                                alt.GradientStop(color="#60a5fa05", offset=1),
-                            ],
-                            x1=1, x2=1, y1=0, y2=1,
+                    
+                    # Process urgency score data
+                    urgency_data = trend_source_df["urgency_score"].dropna()
+                    
+                    if not urgency_data.empty:
+                        # Create urgency score bins/ranges (1-5 scale)
+                        urgency_data = pd.to_numeric(urgency_data, errors="coerce").dropna()
+                        
+                        # Define bins for urgency scores (1-5 scale)
+                        bins = [0, 1, 2, 3, 4, 5]
+                        labels = ['1', '2', '3', '4', '5']
+                        
+                        # Bin the data
+                        binned_data = pd.cut(urgency_data, bins=bins, labels=labels, include_lowest=True)
+                        urgency_counts = binned_data.value_counts().reset_index()
+                        urgency_counts.columns = ['urgency_score', 'count']
+                        urgency_counts = urgency_counts.sort_values('urgency_score')
+                        
+                        # Create bar chart with Altair and blue background
+                        chart = alt.Chart(urgency_counts).mark_bar(
+                            color='#3b82f6',  # Blue bars
+                            strokeWidth=1,
+                            stroke='#1e40af'
+                        ).encode(
+                            x=alt.X('urgency_score:O', title='Urgency Score', axis=alt.Axis(labelAngle=0)),
+                            y=alt.Y('count:Q', title='Number of Reviews'),
+                            tooltip=['urgency_score:O', 'count:Q']
+                        ).properties(
+                            height=320,  # Increased to match map height
+                            title='Distribution of Urgency Scores',
+                            background='#eff6ff'  # Light blue background
+                        ).configure(
+                            background='#eff6ff'  # Chart background
+                        ).configure_axis(
+                            grid=True, 
+                            gridOpacity=0.3, 
+                            gridColor='#bfdbfe',
+                            domain=False, 
+                            labelPadding=6, 
+                            titlePadding=12
+                        ).configure_view(
+                            strokeWidth=0,
+                            fill='#eff6ff'  # View background
                         )
-                    )
-                    line = base.mark_line(color="#2563eb", strokeWidth=2)
-                    chart = (area + line).properties(height=260).configure(
-                        background=None
-                    ).configure_axis(
-                        grid=True, gridOpacity=0.2, domain=False, labelPadding=6, titlePadding=12
-                    ).configure_view(strokeWidth=0)
-                    st.altair_chart(chart, use_container_width=True)
-                except Exception:
-                    # Fallback to Streamlit built-in area chart
+                        
+                        st.altair_chart(chart, use_container_width=True)
+                    else:
+                        st.info("No urgency score data available to plot.")
+                        
+                except Exception as e:
+                    # Fallback to Streamlit built-in bar chart
                     try:
-                        tdf = trend_df.set_index("period")["smoothed"]
-                        st.area_chart(tdf)
+                        urgency_data = trend_source_df["urgency_score"].dropna()
+                        if not urgency_data.empty:
+                            urgency_data = pd.to_numeric(urgency_data, errors="coerce").dropna()
+                            
+                            # Create histogram-like data for bar chart (1-5 scale)
+                            bins = [0, 1, 2, 3, 4, 5]
+                            labels = ['1', '2', '3', '4', '5']
+                            binned_data = pd.cut(urgency_data, bins=bins, labels=labels, include_lowest=True)
+                            urgency_counts = binned_data.value_counts().sort_index()
+                            
+                            st.subheader("Urgency Score Distribution")
+                            st.bar_chart(urgency_counts)
+                        else:
+                            st.info("No urgency score data available to plot.")
                     except Exception:
-                        st.info("Not enough dated sentiment data to plot.")
+                        st.info("Unable to generate urgency score distribution chart.")
             else:
-                st.info("Not enough dated sentiment data to plot.")
+                st.info("No urgency score data available to plot.")
 
         # --- Right: India map for 5 cities with circle size by review count ---
         with right_col:
@@ -672,18 +714,345 @@ def _table_page():
     else:
         st.info("No data to display for the selected filters.")
 
+def _team_management_page():
+    """Team Management page with customer support queue and team performance"""
+    
+    # Apply custom CSS for team management styling
+    st.markdown("""
+    <style>
+    .urgent-header {
+        background-color: #fff5f5;
+        border-left: 4px solid #ef4444;
+        padding: 1rem;
+        margin: 1rem 0;
+        border-radius: 0.5rem;
+    }
+    
+    .urgent-title {
+        color: #dc2626;
+        font-size: 1.5rem;
+        font-weight: bold;
+        margin: 0;
+        display: flex;
+        align-items: center;
+    }
+    
+    .urgent-subtitle {
+        color: #6b7280;
+        font-size: 0.9rem;
+        margin: 0.25rem 0 0 0;
+    }
+    
+    .metrics-card {
+        background-color: #f8fafc;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid #e2e8f0;
+    }
+    
+    .metric-value {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #1f2937;
+    }
+    
+    .metric-label {
+        color: #6b7280;
+        font-size: 0.9rem;
+    }
+    
+    .tooltip-container {
+        position: relative;
+        display: inline-block;
+        cursor: pointer;
+    }
+    
+    .tooltip-text {
+        visibility: hidden;
+        width: 300px;
+        background-color: #1f2937;
+        color: white;
+        text-align: left;
+        border-radius: 6px;
+        padding: 8px;
+        position: absolute;
+        z-index: 1000;
+        bottom: 125%;
+        left: 50%;
+        margin-left: -150px;
+        opacity: 0;
+        transition: opacity 0.3s;
+        font-size: 0.8rem;
+        line-height: 1.4;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .tooltip-text::after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        margin-left: -5px;
+        border-width: 5px;
+        border-style: solid;
+        border-color: #1f2937 transparent transparent transparent;
+    }
+    
+    .tooltip-container:hover .tooltip-text {
+        visibility: visible;
+        opacity: 1;
+    }
+    
+    .issue-preview {
+        color: #374151;
+        font-size: 0.9rem;
+        font-style: italic;
+    }
+    
+    .issue-preview:hover {
+        color: #1f2937;
+        text-decoration: underline;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    def render_urgent_queue_card(df: pd.DataFrame):
+        """Render the urgent feedback queue card"""
+        st.markdown("""
+        <div style="background-color: #f8fafc; padding: 1rem; border-radius: 0.5rem; border: 1px solid #e2e8f0; margin-bottom: 1rem;">
+            <h3 style="color: #dc2626; margin: 0; font-size: 1.25rem; font-weight: bold;">
+                🔔 Issues Queue
+            </h3>
+            <p style="color: #6b7280; font-size: 0.9rem; margin: 0.25rem 0 0 0;">
+                Customer complaints and support requests
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if df.empty:
+            st.info("No items in the queue.")
+            return
+        
+        # Table headers
+        col1, col2, col3, col4 = st.columns([2, 4, 2, 1])
+        with col1:
+            st.markdown("**Customer**")
+        with col2:
+            st.markdown("**Issue**")
+        with col3:
+            st.markdown("**Assigned To**")
+        with col4:
+            st.markdown("**Time**")
+        
+        st.markdown("---")
+        
+        # Display each issue
+        for idx, row in df.iterrows():
+            customer_name = row.get('Customer', 'Unknown')
+            time_info = row.get('Time', '')
+            full_issue = row.get('Issue', 'No summary available')
+            assigned_to = row.get('Assigned To', 'Unassigned')
+            
+            col1, col2, col3, col4 = st.columns([2, 4, 2, 1])
+            
+            with col1:
+                st.markdown(f"**{customer_name}**")
+            
+            with col2:
+                # Display truncated issue with tooltip for full text
+                if len(full_issue) > 80:
+                    truncated_issue = full_issue[:80] + "..."
+                    st.markdown(f"""
+                    <div class="tooltip-container">
+                        <span class="issue-preview">{truncated_issue}</span>
+                        <span class="tooltip-text">{full_issue}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"*{full_issue}*")
+            
+            with col3:
+                if assigned_to and assigned_to != 'Unassigned':
+                    st.markdown(f"**{assigned_to}**")
+                    dept_name = row.get('Department', 'No Department')
+                    if dept_name and dept_name != 'No Department':
+                        st.caption(dept_name)
+                else:
+                    st.markdown("*Unassigned*")
+            
+            with col4:
+                if time_info:
+                    st.caption(time_info)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+
+    def render_team_performance_card(team_df: pd.DataFrame):
+        """Render the team performance card"""
+        if team_df.empty:
+            st.info("No team performance data available.")
+            return
+        
+        st.markdown("""
+        <div style="background-color: #f8fafc; padding: 1rem; border-radius: 0.5rem; border: 1px solid #e2e8f0; margin-bottom: 1rem;">
+            <h3 style="color: #7c3aed; margin: 0; font-size: 1.25rem; font-weight: bold;">
+                👥 Team Performance
+            </h3>
+            <p style="color: #6b7280; font-size: 0.9rem; margin: 0.25rem 0 0 0;">
+                Task allocation and performance metrics
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Table headers
+        col1, col2, col3 = st.columns([3, 2, 2])
+        with col1:
+            st.markdown("**Team Member**")
+        with col2:
+            st.markdown("**Tasks**")  
+        with col3:
+            st.markdown("**Completion**")
+        
+        st.markdown("---")
+        
+        # Display each team member
+        for idx, row in team_df.iterrows():
+            col1, col2, col3 = st.columns([3, 2, 2])
+            
+            with col1:
+                department = row.get('department_name', 'No Department')
+                st.markdown(f"**{row['name']}**")
+                st.caption(department)
+            
+            with col2:
+                total_tasks = int(row['total_tasks'])
+                completed_tasks = int(row['completed_tasks'])
+                
+                st.markdown(f"{total_tasks} assigned")
+                st.caption(f"{completed_tasks} completed")
+            
+            with col3:
+                completion_pct = int(row['completion_percentage'])
+                progress_color = "#10b981" if completion_pct >= 80 else "#f59e0b" if completion_pct >= 60 else "#ef4444"
+                
+                st.markdown(f"""
+                <div style="background-color: #f3f4f6; border-radius: 0.5rem; height: 0.5rem; margin: 0.25rem 0;">
+                    <div style="background-color: {progress_color}; width: {completion_pct}%; height: 100%; border-radius: 0.5rem;"></div>
+                </div>
+                <small style="color: #6b7280;">{completion_pct}%</small>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+
+    def render_metrics_cards(metrics: dict, urgent_summary: dict, team_performance_df: pd.DataFrame):
+        """Render metrics cards"""
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown("""
+            <div class="metrics-card">
+                <div class="metric-value">{}</div>
+                <div class="metric-label">Total Complaints</div>
+            </div>
+            """.format(metrics.get('total_complaints', 0)), unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div class="metrics-card">
+                <div class="metric-value" style="color: #dc2626;">{}</div>
+                <div class="metric-label">Total Unresolved</div>
+            </div>
+            """.format(metrics.get('unresolved_complaints', 0)), unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown("""
+            <div class="metrics-card">
+                <div class="metric-value" style="color: #059669;">{}</div>
+                <div class="metric-label">Last 24h</div>
+            </div>
+            """.format(metrics.get('recent_24h', 0)), unsafe_allow_html=True)
+        
+        with col4:
+            efficiency = calculate_team_efficiency(team_performance_df)
+            st.markdown("""
+            <div class="metrics-card">
+                <div class="metric-value" style="color: #7c3aed;">{}</div>
+                <div class="metric-label">Team Efficiency</div>
+            </div>
+            """.format(f"{efficiency}%"), unsafe_allow_html=True)
+
+    # Main Team Management Page Content
+    st.markdown("""
+    <div class="urgent-header">
+        <h1 class="urgent-title">🎧 Customer Support Queue</h1>
+        <p class="urgent-subtitle">Customer complaints and support requests</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Load and process data
+    with st.spinner("Loading complaints data..."):
+        complaints_df = get_complaints_data()
+    
+    if complaints_df.empty:
+        st.warning("No complaints data available. Please refresh the data or check database connection.")
+        if st.button("Try Refreshing Data"):
+            refresh_complaints_data()
+            st.rerun()
+        return
+    
+    # Process urgent queue and get team performance data
+    urgent_queue_df = process_urgent_feedback_queue(complaints_df)
+    team_performance_df = get_team_performance_data()
+    
+    # Get metrics
+    metrics = get_team_performance_metrics(complaints_df)
+    urgent_summary = get_urgent_queue_summary(urgent_queue_df)
+    
+    # Display metrics cards
+    render_metrics_cards(metrics, urgent_summary, team_performance_df)
+    
+    st.markdown("---")
+    
+    # Main content area with Issues Queue and Team Performance side by side
+    col_main1, col_main2 = st.columns([1, 1])
+    
+    with col_main1:
+        if not urgent_queue_df.empty:
+            render_urgent_queue_card(urgent_queue_df)
+        else:
+            st.markdown("""
+            <div style="background-color: #f8fafc; padding: 1rem; border-radius: 0.5rem; border: 1px solid #e2e8f0; margin-bottom: 1rem;">
+                <h3 style="color: #dc2626; margin: 0; font-size: 1.25rem; font-weight: bold;">
+                    🔔 Issues Queue
+                </h3>
+                <p style="color: #6b7280; font-size: 0.9rem; margin: 0.25rem 0 0 0;">
+                    Customer complaints and support requests
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.info("No items in the queue.")
+    
+    with col_main2:
+        render_team_performance_card(team_performance_df)
+    
+    # Footer with last updated time
+    st.markdown("---")
+    st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
 # --- Navigation: st.Page API with emoji icons (fallback to radio if unavailable) ---
 if hasattr(st, "Page") and hasattr(st, "navigation"):
     pages = [
         st.Page(_dashboard_page, title="Dashboard", icon="📊"),
+        st.Page(_team_management_page, title="Team Management", icon="👥"),
         st.Page(_table_page, title="Table", icon="📋"),
     ]
     st.navigation(pages).run()
 else:
     # Fallback to legacy sidebar radio if running on older Streamlit
     st.sidebar.header("Navigation")
-    _page = st.sidebar.radio("Pages", ["Dashboard", "Table"], index=0)
+    _page = st.sidebar.radio("Pages", ["Dashboard", "Team Management", "Table"], index=0)
     if _page == "Dashboard":
         _dashboard_page()
+    elif _page == "Team Management":
+        _team_management_page()
     else:
         _table_page()
