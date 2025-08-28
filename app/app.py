@@ -329,75 +329,134 @@ CHAT_DB_PATH = APP_DIR / "data" / "streamlit_conversation_memory.db"
 
 
 # -------------------- Chat helper funcs ------------------
+# -------------------- Chatbot Imports --------------------
+# Ensure RAGs package root is importable for its internal absolute imports
+APP_DIR = Path(__file__).resolve().parent
+_rag_root = APP_DIR / "RAGs"
+if str(_rag_root) not in sys.path:
+	sys.path.insert(0, str(_rag_root))
+
+# Try multiple import paths for IntentRouter to work both when run from repo root or /app
+try:
+	from RAGs.chatbot.intent_classifier import IntentRouter  # type: ignore
+	ROUTER_AVAILABLE = True
+except Exception:
+	try:
+		from app.RAGs.chatbot.intent_classifier import IntentRouter  # type: ignore
+		ROUTER_AVAILABLE = True
+	except Exception:
+		IntentRouter = None  # type: ignore
+		ROUTER_AVAILABLE = False
+
+# Ensure data directory exists
+DATA_DIR = APP_DIR / "data"
+DATA_DIR.mkdir(exist_ok=True)
+
+# Chat DB path (reuse existing DB in RAGs if present)
+CHAT_DB_PATH = DATA_DIR / "streamlit_conversation_memory.db"
+
+
+# -------------------- Chat helper funcs ------------------
 def _chat_load_previous_messages() -> List[Dict[str, str]]:
-	if st.session_state.get("router") and hasattr(st.session_state.router, "state"):
-		try:
-			return st.session_state.router.state.get("messages", [])
-		except Exception as e:
-			st.error(f"Error loading previous messages: {e}")
-			return []
-	return []
+	"""Load previous messages for the current thread."""
+	if not st.session_state.get("router"):
+		return []
+	
+	try:
+		# Load from database instead of router state
+		conn = sqlite3.connect(str(CHAT_DB_PATH))
+		cursor = conn.cursor()
+		cursor.execute(
+			"SELECT state_data FROM conversation_state WHERE thread_id = ?",
+			(st.session_state.get("thread_id", ""),)
+		)
+		result = cursor.fetchone()
+		conn.close()
+		
+		if result and result[0]:
+			state_data = json.loads(result[0])
+			return state_data.get("messages", [])
+		return []
+	except Exception as e:
+		st.error(f"Error loading previous messages: {e}")
+		return []
 
 
 def _chat_get_or_create_thread_id() -> str:
+	"""Get existing thread ID or create a new one."""
 	if "thread_id" not in st.session_state:
 		db_path = str(CHAT_DB_PATH)
-		if os.path.exists(db_path):
+		
+		# Ensure database exists
+		if not os.path.exists(db_path):
+			# Create new thread ID if database doesn't exist
+			st.session_state.thread_id = (
+				f"streamlit_user_{time.strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
+			)
+			st.session_state.is_continuing_conversation = False
+		else:
 			try:
 				conn = sqlite3.connect(db_path)
 				cursor = conn.cursor()
 				cursor.execute(
 					"""
-					SELECT DISTINCT thread_id, MAX(updated_at) as last_updated
+					SELECT thread_id, updated_at
 					FROM conversation_state 
-					ORDER BY last_updated DESC
-					LIMIT 10
+					ORDER BY updated_at DESC
+					LIMIT 1
 					"""
 				)
-				existing_threads = cursor.fetchall()
+				result = cursor.fetchone()
 				conn.close()
-				if existing_threads:
-					st.session_state.thread_id = existing_threads[0][0]
+				
+				if result:
+					st.session_state.thread_id = result[0]
 					st.session_state.is_continuing_conversation = True
 				else:
 					st.session_state.thread_id = (
 						f"streamlit_user_{time.strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
 					)
 					st.session_state.is_continuing_conversation = False
-			except Exception:
+			except Exception as e:
+				st.error(f"Database error: {e}")
 				st.session_state.thread_id = (
 					f"streamlit_user_{time.strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
 				)
 				st.session_state.is_continuing_conversation = False
-		else:
-			st.session_state.thread_id = (
-				f"streamlit_user_{time.strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
-			)
-			st.session_state.is_continuing_conversation = False
 	return st.session_state.thread_id
 
 
 def chat_init_session_state():
+	"""Initialize chat session state."""
 	if "router" not in st.session_state:
 		if ROUTER_AVAILABLE and IntentRouter is not None:
 			thread_id = _chat_get_or_create_thread_id()
-			st.session_state.router = IntentRouter(
-				db_path=str(CHAT_DB_PATH),
-				thread_id=thread_id,
-			)
-			if getattr(st.session_state, "is_continuing_conversation", False):
-				previous_messages = _chat_load_previous_messages()
-				if previous_messages:
-					st.session_state.messages = previous_messages.copy()
-					st.session_state.conversation_active = (
-						st.session_state.router.is_conversation_active()
-					)
+			try:
+				st.session_state.router = IntentRouter(
+					db_path=str(CHAT_DB_PATH),
+					thread_id=thread_id,
+				)
+				
+				if getattr(st.session_state, "is_continuing_conversation", False):
+					previous_messages = _chat_load_previous_messages()
+					if previous_messages:
+						st.session_state.messages = previous_messages.copy()
+						# Sync messages with router state
+						if hasattr(st.session_state.router, 'state'):
+							st.session_state.router.state["messages"] = st.session_state.messages.copy()
+						st.session_state.conversation_active = (
+							st.session_state.router.is_conversation_active()
+						)
+					else:
+						st.session_state.messages = []
 				else:
 					st.session_state.messages = []
-			else:
-				st.session_state.messages = []
+			except Exception as e:
+				st.error(f"Error initializing router: {e}")
+				st.session_state.router = None
 		else:
 			st.session_state.router = None
+			
 	if "messages" not in st.session_state:
 		st.session_state.messages = []
 	if "conversation_active" not in st.session_state:
@@ -409,6 +468,7 @@ def chat_init_session_state():
 
 
 def chat_display_conversation_history():
+	"""Display conversation history with proper formatting."""
 	if (
 		hasattr(st.session_state, "is_continuing_conversation")
 		and st.session_state.is_continuing_conversation
@@ -418,6 +478,7 @@ def chat_display_conversation_history():
 			f"👋 Welcome back! Continuing previous conversation with {len(st.session_state.messages)} messages loaded."
 		)
 		st.markdown("---")
+		
 	for i, message in enumerate(st.session_state.messages):
 		with st.chat_message(message["role"]):
 			content = message["content"]
@@ -429,6 +490,7 @@ def chat_display_conversation_history():
 
 
 def chat_get_conversation_analytics() -> Optional[Dict[str, Any]]:
+	"""Get conversation analytics."""
 	if not st.session_state.get("router"):
 		return None
 	try:
@@ -441,100 +503,161 @@ def chat_get_conversation_analytics() -> Optional[Dict[str, Any]]:
 
 
 def chat_show_conversation_selector():
+	"""Show conversation selector with improved error handling."""
 	if not st.session_state.get("router"):
+		st.error("Chat system not available.")
 		return
+		
 	try:
-		conn = sqlite3.connect(st.session_state.router.db_path)
+		conn = sqlite3.connect(str(CHAT_DB_PATH))
 		cursor = conn.cursor()
+		
+		# Get conversations with better error handling
 		cursor.execute(
 			"""
-			SELECT DISTINCT cs.thread_id, cs.updated_at, cs.state_data,
-				   COALESCE(sum.summary, 'No summary available') as summary
+			SELECT DISTINCT cs.thread_id, cs.updated_at, cs.state_data
 			FROM conversation_state cs
-			LEFT JOIN conversation_summaries sum ON cs.thread_id = sum.thread_id
 			ORDER BY cs.updated_at DESC
 			LIMIT 20
 			"""
 		)
 		conversations = cursor.fetchall()
 		conn.close()
+		
 		if conversations:
 			st.subheader("🗂️ Available Conversations")
-			for conv in conversations:
+			for i, conv in enumerate(conversations):
 				thread_id = conv[0]
 				updated_at = conv[1]
-				summary = conv[3]
+				state_data_str = conv[2]
+				
 				try:
-					state_data = json.loads(conv[2]) if conv[2] else {}
-					message_count = len(state_data.get("messages", []))
-				except Exception:
+					state_data = json.loads(state_data_str) if state_data_str else {}
+					messages = state_data.get("messages", [])
+					message_count = len(messages)
+					
+					# Create a simple summary from recent messages
+					summary = "No messages"
+					if messages:
+						recent_user_messages = [
+							msg["content"][:50] + "..." if len(msg["content"]) > 50 else msg["content"]
+							for msg in messages[-3:] if msg["role"] == "user"
+						]
+						if recent_user_messages:
+							summary = " | ".join(recent_user_messages)
+						
+				except Exception as e:
 					message_count = 0
+					summary = f"Error loading conversation: {str(e)[:50]}"
+				
 				display_id = thread_id[-12:] if len(thread_id) > 12 else thread_id
-				col1, col2 = st.columns([3, 1])
-				with col1:
-					st.write(f"**{display_id}**")
-					st.caption(f"{message_count} messages • {updated_at}")
-					st.caption(f"{summary[:100]}..." if len(summary) > 100 else summary)
-				with col2:
-					if st.button("Load", key=f"load_{hash(thread_id)}_{conv[1]}"):  # Use hash + timestamp for uniqueness
-						chat_load_conversation(thread_id)
-						st.rerun()
-				st.markdown("---")
+				
+				with st.container():
+					col1, col2 = st.columns([4, 1])
+					with col1:
+						st.write(f"**{display_id}**")
+						st.caption(f"{message_count} messages • {updated_at}")
+						st.caption(summary)
+					with col2:
+						# Use unique key with index to avoid conflicts
+						if st.button("Load", key=f"load_conv_{i}_{hash(thread_id)}"):
+							chat_load_conversation(thread_id)
+							st.rerun()
+					st.markdown("---")
 		else:
 			st.info("No previous conversations found.")
+			
 	except Exception as e:
 		st.error(f"Error loading conversations: {e}")
 
 
 def chat_load_conversation(thread_id: str):
+	"""Load a specific conversation with improved error handling."""
 	try:
+		# Save current state first
 		if st.session_state.get("router"):
 			st.session_state.router._save_state()
+		
+		# Set new thread ID
 		st.session_state.thread_id = thread_id
 		st.session_state.is_continuing_conversation = True
+		
+		# Create new router instance for the thread
 		if IntentRouter is not None:
 			st.session_state.router = IntentRouter(
-				db_path=str(CHAT_DB_PATH), thread_id=thread_id
+				db_path=str(CHAT_DB_PATH), 
+				thread_id=thread_id
 			)
-		prev = _chat_load_previous_messages()
-		if prev:
-			st.session_state.messages = prev.copy()
-			st.session_state.conversation_active = (
-				st.session_state.router.is_conversation_active()
-			)
-		else:
-			st.session_state.messages = []
-		st.success(f"Loaded conversation: {thread_id[-12:]}")
+			
+			# Load messages
+			previous_messages = _chat_load_previous_messages()
+			if previous_messages:
+				st.session_state.messages = previous_messages.copy()
+				# Sync with router state
+				if hasattr(st.session_state.router, 'state'):
+					st.session_state.router.state["messages"] = st.session_state.messages.copy()
+				st.session_state.conversation_active = (
+					st.session_state.router.is_conversation_active()
+				)
+			else:
+				st.session_state.messages = []
+				
+		# Close conversation selector
+		if "show_conversation_selector" in st.session_state:
+			st.session_state.show_conversation_selector = False
+			
+		display_id = thread_id[-12:] if len(thread_id) > 12 else thread_id
+		st.success(f"Loaded conversation: {display_id}")
+		
 	except Exception as e:
 		st.error(f"Error loading conversation: {e}")
 
 
 def chat_start_new_conversation():
+	"""Start a new conversation with proper cleanup."""
 	try:
+		# Save current state first
+		if st.session_state.get("router"):
+			st.session_state.router._save_state()
+			
+		# Generate new thread ID
 		new_thread_id = (
 			f"streamlit_user_{time.strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
 		)
 		st.session_state.thread_id = new_thread_id
 		st.session_state.is_continuing_conversation = False
+		
+		# Create new router instance
 		if IntentRouter is not None:
 			st.session_state.router = IntentRouter(
-				db_path=str(CHAT_DB_PATH), thread_id=new_thread_id
+				db_path=str(CHAT_DB_PATH), 
+				thread_id=new_thread_id
 			)
+			
+		# Clear messages
 		st.session_state.messages = []
 		st.session_state.conversation_active = True
+		
+		# Close conversation selector
+		if "show_conversation_selector" in st.session_state:
+			st.session_state.show_conversation_selector = False
+			
 		st.success("Started new conversation!")
 		st.rerun()
+		
 	except Exception as e:
 		st.error(f"Error starting new conversation: {e}")
 
 
 def chat_search_history(query: str, search_type: str = "all") -> List[Dict[str, Any]]:
+	"""Search conversation history."""
 	if not st.session_state.get("router"):
 		return []
 	try:
-		conn = sqlite3.connect(st.session_state.router.db_path)
+		conn = sqlite3.connect(str(CHAT_DB_PATH))
 		cursor = conn.cursor()
 		results: List[Dict[str, Any]] = []
+		
 		if search_type in ["all", "qna"]:
 			cursor.execute(
 				"""
@@ -546,7 +669,7 @@ def chat_search_history(query: str, search_type: str = "all") -> List[Dict[str, 
 			)
 			for row in cursor.fetchall():
 				try:
-					state_data = json.loads(row[1])
+					state_data = json.loads(row[1]) if row[1] else {}
 					messages = state_data.get("messages", [])
 					for msg in messages:
 						if query.lower() in msg.get("content", "").lower():
@@ -561,6 +684,7 @@ def chat_search_history(query: str, search_type: str = "all") -> List[Dict[str, 
 							)
 				except Exception:
 					continue
+					
 		if search_type in ["all", "complaint"]:
 			cursor.execute(
 				"""
@@ -591,9 +715,11 @@ def chat_search_history(query: str, search_type: str = "all") -> List[Dict[str, 
 
 
 def chat_display_search_results(results: List[Dict[str, Any]], query: str):
+	"""Display search results."""
 	if not results:
 		st.info(f"No results found for '{query}'")
 		return
+		
 	st.success(f"Found {len(results)} results for '{query}':")
 	for i, result in enumerate(results):
 		with st.expander(f"Result {i+1} - {result['type'].title()}", expanded=False):
@@ -610,8 +736,10 @@ def chat_display_search_results(results: List[Dict[str, Any]], query: str):
 
 
 def chat_enhance_input(user_input: str) -> str:
+	"""Enhance user input with context."""
 	if not st.session_state.get("messages"):
 		return user_input
+		
 	if any(k in user_input.lower() for k in ["complaint", "issue", "problem"]):
 		if st.session_state.get("router") and hasattr(st.session_state.router, "_get_complaint_history"):
 			try:
@@ -627,23 +755,26 @@ def chat_enhance_input(user_input: str) -> str:
 
 
 def chat_get_context_summary() -> str:
+	"""Get conversation context summary."""
 	if not st.session_state.get("messages"):
 		return "No conversation history yet."
+		
 	try:
 		user_messages = [m for m in st.session_state.messages if m["role"] == "user"]
 		assistant_messages = [m for m in st.session_state.messages if m["role"] == "assistant"]
+		
 		complaint_count = 0
 		if st.session_state.get("router") and hasattr(st.session_state.router, "state"):
 			complaint_count = st.session_state.router.state.get("total_complaints", 0)
-		summary = (
-			f"""
-		**Conversation Summary:**
-		- Total messages: {len(st.session_state.messages)}
-		- Your questions: {len(user_messages)}
-		- My responses: {len(assistant_messages)}
-		- Complaints discussed: {complaint_count}
-		"""
-		)
+			
+		summary = f"""
+**Conversation Summary:**
+- Total messages: {len(st.session_state.messages)}
+- Your questions: {len(user_messages)}
+- My responses: {len(assistant_messages)}
+- Complaints discussed: {complaint_count}
+"""
+		
 		if user_messages:
 			recent_topics: List[str] = []
 			for msg in user_messages[-3:]:
@@ -657,8 +788,10 @@ def chat_get_context_summary() -> str:
 
 
 def chat_context_panel():
+	"""Display conversation context panel."""
 	if not st.session_state.get("messages"):
 		return
+		
 	with st.expander("🧠 Conversation Memory (What I Remember)", expanded=False):
 		st.markdown(chat_get_context_summary())
 		st.markdown("---")
@@ -670,7 +803,6 @@ def chat_context_panel():
 			topics = [f"• {m}" for m in recent_user_msgs if len(m) < 100]
 			for topic in topics[-5:]:
 				st.markdown(topic)
-
 
 def _lookup_asin_description_by_title(title: str) -> Optional[Dict[str, Optional[str]]]:
 	"""Best-effort lookup of ASIN, Description, and ImageURL for a given Title.
@@ -1108,6 +1240,7 @@ def page_dashboard():
 
 
 def page_chat():
+	"""Main chat page function with improved error handling and persistence."""
 	# Chat session setup
 	chat_init_session_state()
 
@@ -1117,9 +1250,11 @@ def page_chat():
 		if ROUTER_AVAILABLE and st.session_state.get("router"):
 			thread_id = st.session_state.get("thread_id")
 			if thread_id:
-				st.info(f"**Session ID:** {thread_id[:20]}...")
+				display_id = thread_id[-20:] if len(thread_id) > 20 else thread_id
+				st.info(f"**Session ID:** {display_id}")
 			else:
 				st.info("**Session ID:** Initializing...")
+				
 			if hasattr(st.session_state, "is_continuing_conversation"):
 				if st.session_state.is_continuing_conversation:
 					st.success(
@@ -1127,29 +1262,46 @@ def page_chat():
 					)
 				else:
 					st.info("🆕 Started new conversation")
+		else:
+			st.warning("⚠️ Chat system not available")
 
 		st.subheader("💬 Conversation Management")
+		
+		# Toggle conversation selector
 		if st.button("🔄 Switch Conversation"):
-			st.session_state.show_conversation_selector = True
-		if getattr(st.session_state, "show_conversation_selector", False):
+			st.session_state.show_conversation_selector = not st.session_state.get("show_conversation_selector", False)
+			
+		# Show conversation selector if toggled
+		if st.session_state.get("show_conversation_selector", False):
 			chat_show_conversation_selector()
+			
 		if st.button("🆕 Start New Conversation"):
 			chat_start_new_conversation()
 
 		col_a, col_b = st.columns(2)
 		with col_a:
 			if st.button("🔄 Reset Current"):
-				if st.session_state.get("router"):
-					st.session_state.router.reset_conversation()
-				st.session_state.messages = []
-				st.rerun()
+				try:
+					if st.session_state.get("router"):
+						st.session_state.router.reset_conversation()
+					st.session_state.messages = []
+					st.success("Conversation reset!")
+					st.rerun()
+				except Exception as e:
+					st.error(f"Error resetting: {e}")
+					
 		with col_b:
 			if st.button("📊 Analytics"):
 				st.session_state.show_analytics = not st.session_state.get("show_analytics", False)
 				st.rerun()
 
 		st.markdown("---")
-		# Removed chat width/visibility controls; chat now uses full width on this page
+		
+		# Database status
+		if os.path.exists(str(CHAT_DB_PATH)):
+			st.success("✅ Database connected")
+		else:
+			st.error("❌ Database not found")
 
 	# -------------------- Chat layout ---------------------
 	st.title("🤖 Chat Assistant")
@@ -1168,37 +1320,60 @@ def page_chat():
 				st.metric("You", user_messages)
 			with c3:
 				st.metric("Assistant", assistant_messages)
+
 	# History and context
 	chat_display_conversation_history()
 	chat_context_panel()
 
-	# Chat input
+	# Chat input section
 	if st.session_state.get("conversation_active", True) and st.session_state.get("router"):
 		user_input = st.chat_input("Type your message here…")
 		if user_input:
+			# Add user message to session state immediately
 			st.session_state.messages.append({"role": "user", "content": user_input})
+			
+			# Display user message immediately
+			with st.chat_message("user"):
+				st.markdown(f"**Message #{len([m for m in st.session_state.messages if m['role'] == 'user'])}**")
+				st.markdown(user_input)
+			
+			# Process the message
 			enhanced = chat_enhance_input(user_input)
 			with st.spinner("Processing…"):
 				try:
 					response = st.session_state.router.process_message(enhanced)
+					
+					# Add assistant response to session state
 					st.session_state.messages.append({"role": "assistant", "content": response})
+					
+					# Ensure router state is synced
 					if hasattr(st.session_state.router, "state") and "messages" in st.session_state.router.state:
 						st.session_state.router.state["messages"] = st.session_state.messages.copy()
 						st.session_state.router._save_state()
+					
+					# Display assistant response
+					with st.chat_message("assistant"):
+						st.markdown(response)
+					
+					# Check if conversation is still active
 					if not st.session_state.router.is_conversation_active():
 						st.session_state.conversation_active = False
 						st.info("Conversation has ended. Reset to start a new one.")
-					st.rerun()
+					
 				except Exception as e:
-					st.error(f"Error: {e}")
+					error_msg = f"Error processing message: {str(e)}"
+					st.error(error_msg)
 					st.session_state.messages.append({
 						"role": "assistant",
 						"content": "I encountered an error processing your message. Please try again.",
 					})
+					with st.chat_message("assistant"):
+						st.markdown("I encountered an error processing your message. Please try again.")
+						
 	elif not st.session_state.get("conversation_active", True):
-		st.warning("Conversation has ended. Please reset to start a new conversation.")
+		st.warning("⚠️ Conversation has ended. Please reset to start a new conversation.")
 	else:
-		st.error("Chat system is not available.")
+		st.error("❌ Chat system is not available. Please check your configuration.")
 
 	st.markdown("---")
 	st.subheader("📝 Sample Queries")
@@ -1216,20 +1391,28 @@ def page_chat():
 	for i, query in enumerate(sample_queries):
 		col_idx = i % 3  # Cycle through columns
 		with cols[col_idx]:
-			if st.button(f"💬 {query}", key=f"sample_{hash(query)}"):
+			# Use a more unique key to avoid conflicts
+			query_key = f"sample_{i}_{hash(query)}"
+			if st.button(f"💬 {query}", key=query_key):
 				if st.session_state.get("router") and st.session_state.get("conversation_active", True):
+					# Add user message
 					st.session_state.messages.append({"role": "user", "content": query})
 					enhanced_q = chat_enhance_input(query)
+					
 					with st.spinner("Processing…"):
 						try:
 							response = st.session_state.router.process_message(enhanced_q)
 							st.session_state.messages.append({"role": "assistant", "content": response})
+							
+							# Sync router state
 							if hasattr(st.session_state.router, "state") and "messages" in st.session_state.router.state:
 								st.session_state.router.state["messages"] = st.session_state.messages.copy()
 								st.session_state.router._save_state()
 							st.rerun()
 						except Exception as e:
 							st.error(f"Error: {e}")
+				else:
+					st.warning("Chat system not available or conversation ended.")
 
 	# Optional analytics section
 	if st.session_state.get("show_analytics"):
@@ -1247,6 +1430,7 @@ def page_chat():
 				st.metric("Session Q&A", current.get("total_qna", 0))
 			with col4:
 				st.metric("Intent", current.get("current_intent", "None"))
+			
 			historical = analytics["historical_data"]
 			st.subheader("Historical Overview")
 			c5, c6, c7 = st.columns(3)
@@ -1256,6 +1440,7 @@ def page_chat():
 				st.metric("Total Complaints", historical.get("total_complaints", 0))
 			with c7:
 				st.metric("Total Q&A", historical.get("total_qna", 0))
+			
 			if historical.get("recent_sessions"):
 				st.subheader("Recent Sessions")
 				for session in historical["recent_sessions"][:3]:
@@ -1264,7 +1449,8 @@ def page_chat():
 						st.write(
 							f"Complaints: {session['complaints']}, Q&A: {session['qna']}"
 						)
-
+		else:
+			st.info("No analytics available.")
 # -------------------- In-app Navigation ------------------
 pages = [
 	st.Page(page_dashboard, title="Dashboard", icon="🏠"),
