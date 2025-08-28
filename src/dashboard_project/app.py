@@ -41,108 +41,44 @@ st.markdown(
 st.markdown(
         f"""
         <h1 style="margin:0 0 0.75rem 0; text-align:center; font-size:4.4rem; font-weight:800; line-height:1.2; background:linear-gradient(90deg, {title_start}, {title_end}); -webkit-background-clip:text; background-clip:text; color:transparent;">
-            Beauty CX Dashboard
+            🌟 Beauty CX Analytics Hub
         </h1>
+        <p style="text-align:center; font-size:1.2rem; color:#64748b; margin-bottom:2rem; font-weight:400;">
+            Your comprehensive customer experience intelligence platform
+        </p>
         """,
         unsafe_allow_html=True,
 )
 
 # Manual refresh to clear cached data and fetch fresh rows
-if st.button("Refresh data", type="primary", help="Clear cached results and reload from DB"):
-    # Clear function-specific caches (Streamlit 1.25+). Fallback to global clear if needed.
-    cleared_any = False
-    try:
-        fetch_table.clear()
-        cleared_any = True
-    except Exception:
-        pass
-    try:
-        fetch_count.clear()
-        cleared_any = True or cleared_any
-    except Exception:
-        pass
-    if not cleared_any:
+col1, col2, col3 = st.columns([2, 1, 2])
+with col2:
+    if st.button("🔄 Refresh Data", type="primary", help="Get the latest data from database", use_container_width=True):
+        # Clear function-specific caches (Streamlit 1.25+). Fallback to global clear if needed.
+        cleared_any = False
         try:
-            st.cache_data.clear()
+            fetch_table.clear()
+            cleared_any = True
         except Exception:
             pass
-    st.toast("Refreshing data…", icon="🔄")
-    st.rerun()
+        try:
+            fetch_count.clear()
+            cleared_any = True or cleared_any
+        except Exception:
+            pass
+        if not cleared_any:
+            try:
+                st.cache_data.clear()
+            except Exception:
+                pass
+        st.toast("✅ Data refreshed successfully!", icon="🔄")
+        st.rerun()
 
 # Load data once (cache-aware) and build filters
 df = fetch_table("analysis_results")
 filters = get_filter_options(df)
 
 # Note: Navigation will be handled via st.Page/st.navigation below (with emoji icons).
-
-"""Sidebar filters (except Category which is shown in Dashboard header)."""
-st.sidebar.header("Filters")
-# Replace ASIN with Title filter
-title_choices = filters.get("title")
-if (not title_choices) and isinstance(df, pd.DataFrame) and ("title" in df.columns):
-    try:
-        title_choices = sorted([t for t in df["title"].dropna().unique().tolist() if str(t).strip()])
-    except Exception:
-        title_choices = []
-selected_titles = st.sidebar.multiselect("Title", options=title_choices or [], default=[])
-
-# Additional categorical filters
-region_choices = filters.get("region", [])
-selected_regions = st.sidebar.multiselect("Region", options=region_choices, default=[])
-
-sentiment_choices = filters.get("sentiment", [])
-selected_sentiments = st.sidebar.multiselect("Sentiment", options=sentiment_choices, default=[])
-
-primary_category_choices = filters.get("primary_category", [])
-
-# Numeric range filter for urgency_score
-urgency_cfg = filters.get("urgency_score", {}) or {}
-urgency_score_range = None
-if isinstance(urgency_cfg, dict) and urgency_cfg.get("min") is not None and urgency_cfg.get("max") is not None:
-    try:
-        umin = float(urgency_cfg["min"])
-        umax = float(urgency_cfg["max"])
-        if umin < umax:
-            urgency_score_range = st.sidebar.slider(
-                "Urgency score",
-                min_value=umin,
-                max_value=umax,
-                value=(umin, umax),
-            )
-        else:
-            st.sidebar.caption("Urgency score range unavailable.")
-    except Exception:
-        st.sidebar.caption("Urgency score range unavailable.")
-
-# Date range filter for review_date
-review_date_cfg = filters.get("review_date", {}) or {}
-review_date_range = None
-if isinstance(review_date_cfg, dict) and review_date_cfg.get("min") is not None and review_date_cfg.get("max") is not None:
-    start_ts = pd.to_datetime(review_date_cfg["min"], errors="coerce")
-    end_ts = pd.to_datetime(review_date_cfg["max"], errors="coerce")
-    if pd.notna(start_ts) and pd.notna(end_ts) and start_ts <= end_ts:
-        start_date = start_ts.date()
-        end_date = end_ts.date()
-        review_date_range = st.sidebar.date_input(
-            "Review date",
-            value=(start_date, end_date),
-            min_value=start_date,
-            max_value=end_date,
-        )
-        # Normalize single-date selection to a (start, end) tuple
-        if review_date_range is not None and not isinstance(review_date_range, (list, tuple)):
-            review_date_range = (review_date_range, review_date_range)
-        elif isinstance(review_date_range, (list, tuple)) and len(review_date_range) == 1:
-            review_date_range = (review_date_range[0], review_date_range[0])
-
-# Trend smoothing (moved to sidebar)
-smoothing_window = st.sidebar.slider(
-    "Trend smoothing window",
-    min_value=0,
-    max_value=12,
-    value=3,
-    help="Rolling window size; 0 disables smoothing",
-)
 
 # Compute KPI dict locally (mirrors calculation.KpiEngine semantics for the dashboard)
 def _compute_kpis_for_dashboard(filtered_df: pd.DataFrame, use_review_date: bool, period_days: int) -> dict:
@@ -183,21 +119,97 @@ def _compute_kpis_for_dashboard(filtered_df: pd.DataFrame, use_review_date: bool
         return engine.compute_all(days=period_days)
 
 def _dashboard_page():
+    # Welcome message for first-time users
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #faccff 0%, #a178df 50%); padding: 1rem; border-radius: 0.85rem; margin-bottom: 0.5rem; color: white; text-align: center;">
+        <h3 style="margin: 0; font-weight: 500; font-size: 1.3rem;">📈 Customer Experience Analytics</h3>
+        <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.9rem;">Monitor sentiment trends, track urgent issues, and discover key insights</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar filters - only for Analytics Dashboard
+    """📊 Smart Filters - Customize your view"""
+    st.sidebar.markdown("### 🎯 Filter Options")
+
+    # Replace ASIN with Title filter
+    title_choices = filters.get("title")
+    if (not title_choices) and isinstance(df, pd.DataFrame) and ("title" in df.columns):
+        try:
+            title_choices = sorted([t for t in df["title"].dropna().unique().tolist() if str(t).strip()])
+        except Exception:
+            title_choices = []
+    selected_titles = st.sidebar.multiselect("🏷️ Product Titles", options=title_choices or [], default=[], help="Filter by specific product titles")
+    
+    # Additional categorical filters
+    region_choices = filters.get("region", [])
+    selected_regions = st.sidebar.multiselect("📍 Regions", options=region_choices, default=[], help="Select geographical regions")
+
+    sentiment_choices = filters.get("sentiment", [])
+    selected_sentiments = st.sidebar.multiselect("😊 Customer Sentiment", options=sentiment_choices, default=[], help="Filter by customer sentiment")
+
+    primary_category_choices = filters.get("primary_category", [])
+
+    # Numeric range filter for urgency_score
+    urgency_cfg = filters.get("urgency_score", {}) or {}
+    urgency_score_range = None
+    if isinstance(urgency_cfg, dict) and urgency_cfg.get("min") is not None and urgency_cfg.get("max") is not None:
+        try:
+            umin = float(urgency_cfg["min"])
+            umax = float(urgency_cfg["max"])
+            if umin < umax:
+                st.sidebar.markdown("---")
+                urgency_score_range = st.sidebar.slider(
+                    "⚠️ Urgency Level",
+                    min_value=umin,
+                    max_value=umax,
+                    value=(umin, umax),
+                    help="Filter by urgency score range (1=low, 5=critical)"
+                )
+            else:
+                st.sidebar.info("ℹ️ Urgency score data not available")
+        except Exception:
+            st.sidebar.info("ℹ️ Urgency score data not available")
+
+    # Date range filter for review_date
+    review_date_cfg = filters.get("review_date", {}) or {}
+    review_date_range = None
+    if isinstance(review_date_cfg, dict) and review_date_cfg.get("min") is not None and review_date_cfg.get("max") is not None:
+        start_ts = pd.to_datetime(review_date_cfg["min"], errors="coerce")
+        end_ts = pd.to_datetime(review_date_cfg["max"], errors="coerce")
+        if pd.notna(start_ts) and pd.notna(end_ts) and start_ts <= end_ts:
+            start_date = start_ts.date()
+            end_date = end_ts.date()
+            st.sidebar.markdown("---")
+            review_date_range = st.sidebar.date_input(
+                "📅 Review Period",
+                value=(start_date, end_date),
+                min_value=start_date,
+                max_value=end_date,
+                help="Select date range for customer reviews"
+            )
+            # Normalize single-date selection to a (start, end) tuple
+            if review_date_range is not None and not isinstance(review_date_range, (list, tuple)):
+                review_date_range = (review_date_range, review_date_range)
+            elif isinstance(review_date_range, (list, tuple)) and len(review_date_range) == 1:
+                review_date_range = (review_date_range[0], review_date_range[0])
+    
     # Header controls: period selection and Category filter (moved from sidebar)
-    left, mid, right = st.columns([1, 1, 2])
-    with left:
+    st.markdown("### ⏰ Analysis Period & Categories")
+    left, mid, right = st.columns([2, 1, 1])
+    with mid:
         period_label = st.selectbox(
-            "Period",
+            "📊 Time Period",
             options=["Last 7 days", "Last 30 days", "Last 90 days", "Use Review Date"],
             index=1,
+            help="Choose your analysis time frame"
         )
-    with mid:
+    with right:
         selected_primary_categories = st.multiselect(
-            "All Categories",
+            "🏷️ Product Categories",
             options=primary_category_choices,
             default=st.session_state.get("primary_category_top", []),
             key="primary_category_top",
-            help="Filter by primary category",
+            help="Filter by product categories",
         )
 
     # Apply filters (including Category from header). Prefilter by Title and drop ASIN filter.
@@ -378,9 +390,35 @@ def _dashboard_page():
 
     st.markdown(kpi_grid_html, unsafe_allow_html=True)
 
+    # Add helpful information about KPIs
+    with st.expander("ℹ️ Understanding Your Metrics", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown("""
+            **🎯 Sentiment Average**
+            - Range: -1.00 to 1.00
+            - Higher = More positive feedback
+            - Calculated from customer reviews
+            """)
+        with col2:
+            st.markdown("""
+            **📊 Review Volume**
+            - Total customer reviews
+            - Shows period-over-period change
+            - Indicates engagement levels
+            """)
+        with col3:
+            st.markdown("""
+            **⚠️ Urgent Issues**
+            - Critical: Urgency score ≥ 5
+            - High: Urgency score 4-5
+            - Requires immediate attention
+            """)
+
     # Historical Sentiment Trend (left) and Region Map (right)
-    st.markdown("### Historical")
-    st.caption("Left: urgency score distribution • Right: review density by region")
+    st.markdown("---")
+    st.markdown("### 📈 Data Insights & Trends")
+    st.caption("📊 Left: Customer urgency patterns • 🗺️ Right: Geographic distribution of reviews")
     trend_container = st.container()
     with trend_container:
         # Align trend data with the period selection when not using Review Date
@@ -429,7 +467,7 @@ def _dashboard_page():
                             tooltip=['urgency_score:O', 'count:Q']
                         ).properties(
                             height=320,  # Increased to match map height
-                            title='Distribution of Urgency Scores',
+                            title='Customer Issue Urgency Distribution',
                             background='#eff6ff'  # Light blue background
                         ).configure(
                             background='#eff6ff'  # Chart background
@@ -447,7 +485,7 @@ def _dashboard_page():
                         
                         st.altair_chart(chart, use_container_width=True)
                     else:
-                        st.info("No urgency score data available to plot.")
+                        st.info("📊 No urgency score data available to display")
                         
                 except Exception as e:
                     # Fallback to Streamlit built-in bar chart
@@ -462,14 +500,14 @@ def _dashboard_page():
                             binned_data = pd.cut(urgency_data, bins=bins, labels=labels, include_lowest=True)
                             urgency_counts = binned_data.value_counts().sort_index()
                             
-                            st.subheader("Urgency Score Distribution")
+                            st.subheader("📊 Customer Issue Urgency Distribution")
                             st.bar_chart(urgency_counts)
                         else:
-                            st.info("No urgency score data available to plot.")
+                            st.info("📊 No urgency score data available to display")
                     except Exception:
-                        st.info("Unable to generate urgency score distribution chart.")
+                        st.info("📊 Unable to generate urgency distribution chart")
             else:
-                st.info("No urgency score data available to plot.")
+                st.info("📊 No urgency score data available to display")
 
         # --- Right: India map for 5 cities with circle size by review count ---
         with right_col:
@@ -502,7 +540,7 @@ def _dashboard_page():
                     # Map all region values to the 5 canonical cities
                     mapped = df_map_src["region"].astype(str).apply(_norm).map(CANON).dropna()
                     if mapped.empty:
-                        st.info("No supported cities found (Delhi, Mumbai, Chennai, Kolkata, Bengaluru).")
+                        st.info("🗺️ No supported cities found (Delhi, Mumbai, Chennai, Kolkata, Bengaluru)")
                     else:
                         counts = mapped.value_counts().rename_axis("city").reset_index(name="count")
                         counts["lat"] = counts["city"].map(lambda c: CITY_COORDS[c][0])
@@ -550,7 +588,7 @@ def _dashboard_page():
                         }
                         mapped = df_map_src["region"].astype(str).str.lower().map(CANON).dropna()
                         if mapped.empty:
-                            st.info("No supported cities found (Delhi, Mumbai, Chennai, Kolkata, Bengaluru).")
+                            st.info("🗺️ No supported cities found (Delhi, Mumbai, Chennai, Kolkata, Bengaluru)")
                         else:
                             counts = mapped.value_counts().rename_axis("city").reset_index(name="count")
                             counts["latitude"] = counts["city"].map(lambda c: CITY_COORDS[c][0])
@@ -569,13 +607,14 @@ def _dashboard_page():
                             deck = pdk.Deck(layers=[layer], initial_view_state=view_state, map_style=None)
                             st.pydeck_chart(deck, use_container_width=True)
                     except Exception:
-                        st.info("Install folium or pydeck to see the map.")
+                        st.info("🗺️ Install map dependencies to view geographic insights")
             else:
-                st.info("No region column available to map.")
+                st.info("🗺️ No geographic data available for mapping")
 
     # Beauty Sentiment Drivers (computed in calculation.py)
-    st.markdown("### Beauty Sentiment Drivers")
-    st.caption("Top topics mentioned in reviews, split by sentiment")
+    st.markdown("---")
+    st.markdown("### 🎯 Key Customer Sentiment Drivers")
+    st.caption("💡 Discover what makes customers happy or frustrated with your products")
 
     # Attach Positive/Negative list columns to filtered_df using engine
     drivers_engine = KpiEngine(filtered_df)
@@ -641,18 +680,19 @@ def _dashboard_page():
                         )
 
 
-    p_tabs = st.tabs(["Positive Drivers", "Negative Drivers"])
+    p_tabs = st.tabs(["✅ What Customers Love", "❌ Areas for Improvement"])
     with p_tabs[0]:
-        _render_topic_cards(pos_top, "No. of Reviews", negative=False)
+        _render_topic_cards(pos_top, "Mentions", negative=False)
     with p_tabs[1]:
-        _render_topic_cards(neg_top, "No. of Reviews", negative=True)
+        _render_topic_cards(neg_top, "Mentions", negative=True)
 
     # Recommended Actions (separate section below drivers)
-    st.markdown("### ✅ Recommended Actions")
-    st.caption("AI-powered recommendations based on current data")
+    st.markdown("---")
+    st.markdown("### 🚀 Recommended Actions")
+    st.caption("🎯 AI-powered suggestions to improve your customer experience")
     colA, colB = st.columns(2)
     with colA:
-        st.markdown("**Immediate Actions**")
+        st.markdown("**🔥 Immediate Actions**")
         st.markdown(
                 """
                 <div style='background:#fff6f6; border:1px solid #ffd7d7; border-radius:12px; padding:0.9rem 1rem; margin-bottom:0.8rem;'>
@@ -667,7 +707,7 @@ def _dashboard_page():
                 unsafe_allow_html=True,
         )
     with colB:
-        st.markdown("**Strategic Improvements**")
+        st.markdown("**📈 Strategic Improvements**")
         st.markdown(
                 """
                 <div style='background:#eef3ff; border:1px solid #d5e2ff; border-radius:12px; padding:0.9rem 1rem; margin-bottom:0.8rem;'>
@@ -683,39 +723,71 @@ def _dashboard_page():
         )
 
     # Optional: quick status using COUNT(*) of the whole table
+    st.markdown("---")
     count = fetch_count("analysis_results")
     if count is None:
-        st.caption("Row count unavailable (DB error).")
+        st.caption("ℹ️ Database connection status: Checking...")
     else:
-        st.caption(f"Total rows in table: {count:,}")
+        st.caption(f"📊 Total data points analyzed: **{count:,}** customer reviews")
+        
+    # Add footer with tips
+    st.markdown("---")
+    with st.expander("💡 Tips for Using This Dashboard", expanded=False):
+        st.markdown("""
+        **🎯 Getting Started:**
+        - Use the sidebar filters to focus on specific products, regions, or time periods
+        - Toggle between different time periods using the dropdown above
+        - Hover over charts for detailed information
+        
+        **📊 Understanding Your Data:**
+        - Green indicators = positive trends
+        - Red indicators = areas needing attention
+        - Higher urgency scores require immediate action
+        
+        **🔄 Keeping Data Fresh:**
+        - Click "Refresh Data" to get the latest customer feedback
+        - Data updates automatically reflect in all charts and metrics
+        """)
 
 def _table_page():
-    st.subheader("Analysis Results")
-    st.write("Displaying data from the analysis_results table (filtered):")
-    # Compute filtered_df for Table page using sidebar filters and stored Category
-    base_df = df
-    if 'selected_titles' in locals() and selected_titles:
-        try:
-            base_df = base_df[base_df["title"].isin(selected_titles)]
-        except Exception:
-            pass
-    selected_primary_categories = st.session_state.get("primary_category_top", [])
-    table_df = apply_filters(
-        base_df,
-        asin_values=[],
-        region_values=selected_regions,
-        sentiment_values=selected_sentiments,
-        primary_category_values=selected_primary_categories,
-        urgency_score_range=urgency_score_range,
-        review_date_range=review_date_range,  # use sidebar date range as-is on Table
-    )
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%); padding: 1rem; border-radius: 0.75rem; margin-bottom: 1.5rem; color: white; text-align: center;">
+        <h3 style="margin: 0; font-weight: 500; font-size: 1.3rem;">📋 Raw Data Explorer</h3>
+        <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.9rem;">Dive deep into your customer feedback data</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("### 🔍 Detailed Analysis Results")
+    st.write("📊 Explore the complete dataset:")
+    # Show all data without filters for Table page
+    table_df = df
     if table_df is not None and not table_df.empty:
-        st.dataframe(table_df, hide_index=False)
+        st.success(f"✅ Found **{len(table_df):,}** records in total")
+        
+        # Add download option
+        csv = table_df.to_csv(index=False)
+        st.download_button(
+            label="💾 Download as CSV",
+            data=csv,
+            file_name=f"customer_analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+            help="Download complete dataset for external analysis"
+        )
+        
+        st.dataframe(table_df, hide_index=False, use_container_width=True)
     else:
-        st.info("No data to display for the selected filters.")
+        st.info("� No data available in the database. Please check your data source.")
 
 def _team_management_page():
     """Team Management page with customer support queue and team performance"""
+    
+    # Welcome header for team management
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #c0b0e8 0%, #008490 90%); padding: 1rem; border-radius: 0.75rem; margin-bottom: 1.5rem; color: white; text-align: center;">
+        <h3 style="margin: 0; font-weight: 500; font-size: 1.3rem;">👥 Team Operations Center</h3>
+        <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.9rem;">Monitor team performance and manage customer support queue</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Apply custom CSS for team management styling
     st.markdown("""
@@ -981,20 +1053,16 @@ def _team_management_page():
             """.format(f"{efficiency}%"), unsafe_allow_html=True)
 
     # Main Team Management Page Content
-    st.markdown("""
-    <div class="urgent-header">
-        <h1 class="urgent-title">🎧 Customer Support Queue</h1>
-        <p class="urgent-subtitle">Customer complaints and support requests</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("### 🎧 Live Support Dashboard")
     
     # Load and process data
-    with st.spinner("Loading complaints data..."):
+    with st.spinner("🔄 Loading customer support data..."):
         complaints_df = get_complaints_data()
     
     if complaints_df.empty:
-        st.warning("No complaints data available. Please refresh the data or check database connection.")
-        if st.button("Try Refreshing Data"):
+        st.error("⚠️ No customer support data available")
+        st.info("💡 Please check database connection or refresh the data")
+        if st.button("🔄 Try Refreshing Data", type="primary"):
             refresh_complaints_data()
             st.rerun()
         return
@@ -1008,11 +1076,13 @@ def _team_management_page():
     urgent_summary = get_urgent_queue_summary(urgent_queue_df)
     
     # Display metrics cards
+    st.markdown("### 📊 Key Performance Metrics")
     render_metrics_cards(metrics, urgent_summary, team_performance_df)
     
     st.markdown("---")
     
     # Main content area with Issues Queue and Team Performance side by side
+    st.markdown("### 🔥 Active Operations")
     col_main1, col_main2 = st.columns([1, 1])
     
     with col_main1:
@@ -1036,23 +1106,42 @@ def _team_management_page():
     
     # Footer with last updated time
     st.markdown("---")
-    st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.success(f"✅ Dashboard last updated: **{datetime.now().strftime('%Y-%m-%d at %H:%M:%S')}**")
+    
+    # Add team management tips
+    with st.expander("💡 Team Management Tips", expanded=False):
+        st.markdown("""
+        **🎯 Prioritization:**
+        - Focus on Critical (urgency 5) issues first
+        - Monitor team efficiency percentage
+        - Track department-wise complaint distribution
+        
+        **📈 Performance Optimization:**
+        - Green completion rates (80%+) indicate high performance
+        - Yellow rates (60-80%) need attention
+        - Red rates (<60%) require immediate intervention
+        
+        **🔄 Best Practices:**
+        - Regular data refresh ensures real-time monitoring
+        - Hover over charts for detailed insights
+        - Use filters to focus on specific time periods or regions
+        """)
 
 # --- Navigation: st.Page API with emoji icons (fallback to radio if unavailable) ---
 if hasattr(st, "Page") and hasattr(st, "navigation"):
     pages = [
-        st.Page(_dashboard_page, title="Dashboard", icon="📊"),
-        st.Page(_team_management_page, title="Team Management", icon="👥"),
-        st.Page(_table_page, title="Table", icon="📋"),
+        st.Page(_dashboard_page, title="Analytics Dashboard", icon="📊"),
+        st.Page(_team_management_page, title="Team Operations", icon="👥"),
+        st.Page(_table_page, title="Data Explorer", icon="📋"),
     ]
     st.navigation(pages).run()
 else:
     # Fallback to legacy sidebar radio if running on older Streamlit
-    st.sidebar.header("Navigation")
-    _page = st.sidebar.radio("Pages", ["Dashboard", "Team Management", "Table"], index=0)
-    if _page == "Dashboard":
+    st.sidebar.markdown("### 🧭 Navigation")
+    _page = st.sidebar.radio("Choose a view:", ["Analytics Dashboard", "Team Operations", "Data Explorer"], index=0)
+    if _page == "Analytics Dashboard":
         _dashboard_page()
-    elif _page == "Team Management":
+    elif _page == "Team Operations":
         _team_management_page()
     else:
         _table_page()

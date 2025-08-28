@@ -11,7 +11,7 @@ import os
 class IntentRouter:
     """Main router class that manages intent classification and routing with SQLite persistence."""
     
-    def __init__(self, db_path: str = "conversation_memory.db", thread_id: str = "user_session"):
+    def __init__(self, db_path: str = "streamlit_conversation_memory.db", thread_id: str = "user_session"):
         self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         self.router_llm = self.llm.with_structured_output(UserIntent)
         
