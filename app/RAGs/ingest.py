@@ -2,6 +2,8 @@ import json
 import os
 from dotenv import load_dotenv
 from pathlib import Path
+
+from pyparsing import C
 try:
     from langchain_chroma import Chroma  # type: ignore
 except Exception:  # pragma: no cover
@@ -14,7 +16,9 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 
 # 1. Create a path to a new cache directory inside your project
-CACHE_DIR = BASE_DIR / ".huggingface_cache"
+# CACHE_DIR = BASE_DIR / ".huggingface_cache"
+# This is personal file location as it's already installed
+CACHE_DIR = "/Users/nike/Documents/Data Science Work/Practice/Langchain/huggingface_cache"
 
 # 2. Make sure the directory actually exists
 CACHE_DIR.mkdir(exist_ok=True)

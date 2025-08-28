@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 import sqlite3
 import uuid
+import base64
 
 import requests
 from urllib.parse import urlparse, parse_qs
@@ -17,20 +18,69 @@ from typing import Optional, Dict, List, Any
 # ----------------------- Page setup -----------------------
 st.set_page_config(page_title="CX Management", page_icon="💬", layout="wide")
 
+# ----------------------- Helper functions -----------------------
+def _get_image_base64(image_path: str) -> str:
+	"""Convert image to base64 string for HTML display."""
+	try:
+		with open(image_path, "rb") as img_file:
+			return base64.b64encode(img_file.read()).decode()
+	except Exception:
+		return ""
+
 # ----------------------- Theme & styles -------------------
 st.markdown(
 	"""
 	<style>
+	/* Full page background gradient covering entire viewport */
 	.stApp {
-	  background: linear-gradient(135deg, #eef2ff 0%, #fff0f6 50%, #effdf6 100%);
+	  background: linear-gradient(135deg, #eef2ff 0%, #fff0f6 50%, #effdf6 100%) !important;
+	  min-height: 100vh !important;
+	  height: 100% !important;
 	}
+	
+	/* Extend background to cover all areas */
+	.stApp > header {
+	  background: transparent !important;
+	}
+	
+	/* Cover the top toolbar area */
+	.stApp > div[data-testid="stToolbar"] {
+	  background: transparent !important;
+	}
+	
+	/* Ensure background extends to main content area */
+	.main .block-container {
+	  background: transparent !important;
+	}
+	
+	/* Cover sidebar background */
+	.css-1d391kg, .css-1cypcdb {
+	  background: rgba(255,255,255,0.85) !important;
+	  backdrop-filter: blur(10px) !important;
+	}
+	
+	/* Main container styling */
 	.main-card { 
-	  background: rgba(255,255,255,0.78);
-	  border: 1px solid rgba(0,0,0,0.06);
-	  border-radius: 16px; 
-	  padding: 18px 18px 20px; 
-	  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+	  background: rgba(255,255,255,0.85);
+	  border: 1px solid rgba(0,0,0,0.08);
+	  border-radius: 20px; 
+	  padding: 24px; 
+	  box-shadow: 0 12px 32px rgba(0,0,0,0.1);
+	  backdrop-filter: blur(10px);
+	  margin: 16px 0;
 	}
+	
+	/* Enhanced product image container */
+	.product-showcase {
+	  background: rgba(255,255,255,0.9);
+	  border: 2px solid rgba(0,0,0,0.08);
+	  border-radius: 16px;
+	  padding: 16px;
+	  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+	  backdrop-filter: blur(5px);
+	  margin-bottom: 24px;
+	}
+	
 	.media-frame { 
 	  aspect-ratio: 16/9; 
 	  width: 100%; 
@@ -48,12 +98,119 @@ st.markdown(
 	  height: 300px !important;
 	  object-fit: contain !important;
 	  width: 100% !important;
+	  border-radius: 12px !important;
+	}
+	
+	/* Stronger override for product container images - multiple selectors */
+	.product-image-container [data-testid="stImage"] > img,
+	.product-image-container img {
+	  height: 400px !important;
+	  max-height: 400px !important;
+	  min-height: 400px !important;
+	  width: auto !important;
+	  max-width: 100% !important;
+	  object-fit: contain !important;
+	  object-position: center !important;
+	  display: block !important;
+	  margin: 0 auto !important;
+	}
+	
+	/* Target any img element inside product container regardless of nesting */
+	.product-image-container * img {
+	  height: 400px !important;
+	  max-height: 400px !important;
+	  min-height: 400px !important;
+	  object-fit: contain !important;
 	}
 	
 	[data-testid="stVideo"] > video {
 	  height: 300px !important;
 	  object-fit: contain !important;
 	  width: 100% !important;
+	}
+
+	/* Fixed dimensions for product images to maintain layout integrity */
+	.product-image-container {
+	  height: 400px !important;
+	  width: 100% !important;
+	  display: flex !important;
+	  align-items: center !important;
+	  justify-content: center !important;
+	  background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%) !important;
+	  border-radius: 12px !important;
+	  overflow: hidden !important;
+	  box-shadow: 0 6px 20px rgba(0,0,0,0.1) !important;
+	}
+	
+	/* Ensure ALL images inside product container have fixed dimensions */
+	.product-image-container [data-testid="stImage"] {
+	  height: 400px !important;
+	  width: 100% !important;
+	  display: flex !important;
+	  align-items: center !important;
+	  justify-content: center !important;
+	}
+	
+	.product-image-container [data-testid="stImage"] > img {
+	  height: 400px !important;
+	  max-height: 400px !important;
+	  width: auto !important;
+	  max-width: 100% !important;
+	  object-fit: contain !important;
+	  object-position: center !important;
+	  display: block !important;
+	  border-radius: 8px !important;
+	}
+	
+	/* Also target any direct img tags in the container */
+	.product-image-container > img,
+	.product-image-container img {
+	  height: 400px !important;
+	  max-height: 400px !important;
+	  width: auto !important;
+	  max-width: 100% !important;
+	  object-fit: contain !important;
+	  object-position: center !important;
+	  display: block !important;
+	  border-radius: 8px !important;
+	}
+
+	/* Form styling enhancements */
+	.stForm {
+	  background: rgba(255,255,255,0.7) !important;
+	  border-radius: 16px !important;
+	  padding: 20px !important;
+	  border: 1px solid rgba(0,0,0,0.08) !important;
+	}
+	
+	/* Button styling */
+	.stButton > button {
+	  border-radius: 12px !important;
+	  border: none !important;
+	  font-weight: 600 !important;
+	  transition: all 0.3s ease !important;
+	}
+	
+	/* Title styling */
+	.main-title {
+	  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+	  -webkit-background-clip: text !important;
+	  -webkit-text-fill-color: transparent !important;
+	  background-clip: text !important;
+	  font-weight: bold !important;
+	  text-align: center !important;
+	  margin-bottom: 24px !important;
+	}
+	
+	/* Remove any white backgrounds from containers */
+	.stMainBlockContainer, .block-container {
+	  background: transparent !important;
+	}
+	
+	/* Ensure full height coverage */
+	html, body, [data-testid="stAppViewContainer"], .main {
+	  background: transparent !important;
+	  min-height: 100vh !important;
 	}
 
 	/* Nudge header video down a bit so its visual center aligns with the image */
@@ -319,7 +476,7 @@ def chat_show_conversation_selector():
 					st.caption(f"{message_count} messages • {updated_at}")
 					st.caption(f"{summary[:100]}..." if len(summary) > 100 else summary)
 				with col2:
-					if st.button("Load", key=f"load_{thread_id}"):
+					if st.button("Load", key=f"load_{hash(thread_id)}_{conv[1]}"):  # Use hash + timestamp for uniqueness
 						chat_load_conversation(thread_id)
 						st.rerun()
 				st.markdown("---")
@@ -516,9 +673,9 @@ def chat_context_panel():
 
 
 def _lookup_asin_description_by_title(title: str) -> Optional[Dict[str, Optional[str]]]:
-	"""Best-effort lookup of ASIN and Description for a given Title.
+	"""Best-effort lookup of ASIN, Description, and ImageURL for a given Title.
 
-	Returns dict with keys {"ASIN", "Description"} when found, else None.
+	Returns dict with keys {"ASIN", "Description", "ImageURL"} when found, else None.
 	Uses latest matching record by id.
 	"""
 	if not title or not create_db_engine or not text:
@@ -529,7 +686,7 @@ def _lookup_asin_description_by_title(title: str) -> Optional[Dict[str, Optional
 			return None
 		sql = text(
 			"""
-			SELECT "ASIN", "Description"
+			SELECT "ASIN", "Description", "ImageURL"
 			FROM raw_reviews
 			WHERE "Title" ILIKE :t AND "ASIN" IS NOT NULL
 			ORDER BY id DESC
@@ -540,7 +697,11 @@ def _lookup_asin_description_by_title(title: str) -> Optional[Dict[str, Optional
 			row = conn.execute(sql, {"t": f"%{title.strip()}%"}).mappings().first()
 			if not row:
 				return None
-			return {"ASIN": row.get("ASIN"), "Description": row.get("Description")}
+			return {
+				"ASIN": row.get("ASIN"), 
+				"Description": row.get("Description"),
+				"ImageURL": row.get("ImageURL")
+			}
 	except Exception:
 		return None
 
@@ -598,7 +759,6 @@ def _start_backend_if_needed():
 			BACKEND_PORT = alt
 			BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
 			st.session_state["backend_port"] = BACKEND_PORT
-			st.info(f"Port in use; starting API on {BACKEND_PORT}.")
 
 	# Prefer running from project root so relative imports & .env work
 	env = os.environ.copy()
@@ -673,7 +833,8 @@ def page_dashboard():
 		st.markdown("---")
 		
 		# Product Image Ad
-		st.image("../Media/Product.png", caption="✨ Premium Beauty Product", use_container_width=True)
+		product_image_path = str(PROJECT_ROOT / "Media" / "Product.png")
+		st.image(product_image_path, caption="✨ Premium Beauty Product", use_container_width=True)
 		st.markdown(
 			"""
 			<div style='text-align: center; padding: 10px; background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 50%, #fecfef 100%); 
@@ -687,7 +848,8 @@ def page_dashboard():
 		
 		# Product Video Ad
 		st.markdown("#### 📹 See it in Action")
-		st.video("../Media/Product_Video.mp4")
+		product_video_path = str(PROJECT_ROOT / "Media" / "Product_Video.mp4")
+		st.video(product_video_path)
 		st.markdown(
 			"""
 			<div style='text-align: center; padding: 8px; background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); 
@@ -701,25 +863,28 @@ def page_dashboard():
 		st.markdown("---")
 	
 	# ----------------------- Header ---------------------------
-	st.title("CX Management")
-
-	left, right = st.columns(2, gap="small")
-	with left:
-		# Display product image from local Media folder with fixed height
-		st.image("../Media/Product.png", caption="Product Image", use_container_width=True, width=None)
-		
-	with right:
-		# Display product video from local Media folder with caption and slight vertical offset
-		st.markdown('<div class="media-shift">', unsafe_allow_html=True)
-		st.video("../Media/Product_Video.mp4")
-		st.markdown('<div style="margin-top: 110px; text-align: center; width: 100%;"><p style="text-align: center; margin: 0; color: rgb(49, 51, 63); font-size: 14px; line-height: 1.6;">Product Video</p></div>', unsafe_allow_html=True)
-		st.markdown('</div>', unsafe_allow_html=True)
+	st.markdown('<h1 class="main-title">🎯 CX Management Dashboard</h1>', unsafe_allow_html=True)
+	
+	# Single column for full-width product image
+	image_url = st.session_state.get("current_image_url")
+	
+	# Only show image container if we have a valid image URL
+	if image_url and image_url.strip():
+		# Use HTML with inline styles for maximum control over image dimensions
+		st.markdown(f'''
+		<div class="product-image-container" style="height: 400px; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+			<img src="{image_url}" style="height: 400px; max-height: 400px; width: auto; max-width: 100%; object-fit: contain; object-position: center; display: block; border-radius: 8px;" />
+		</div>
+		''', unsafe_allow_html=True)
+		st.markdown('<h3 style="text-align: center; margin-top: 16px; color: #667eea; font-weight: 600;">Featured Product</h3>', unsafe_allow_html=True)
+	
+	st.markdown('</div>', unsafe_allow_html=True)
 
 	st.markdown("---")
 
 	# -------------------- Add Review Form ---------------------
-	st.subheader("Add Customer Review")
-	st.caption("Tip: Provide Title and Review. ASIN and Description will auto-fill from the DB when possible.")
+	st.subheader("📝 Share Your Experience")
+	st.markdown("💡 **Quick Tip:** Start typing the product name and we'll help you find it! ASIN and description will auto-fill.")
 
 	container_ctx = stylable_container("review_form_card", css_styles="") if stylable_container else st.container()
 
@@ -731,8 +896,23 @@ def page_dashboard():
 				st.session_state["title_input"] = _pending.get("title")
 			if _pending.get("desc") is not None:
 				st.session_state["desc_input"] = _pending.get("desc")
+			if _pending.get("image_url") is not None:
+				st.session_state["current_image_url"] = _pending.get("image_url")
 		# Title input and live suggestions OUTSIDE the form for immediate reruns
-		title = st.text_input("Product Title", placeholder="Type to search existing titles…", key="title_input")
+		title = st.text_input("🔍 Product Title", placeholder="Start typing to search products (e.g., 'Moisturizer', 'Lipstick')...", key="title_input")
+		
+		# Auto-fill ImageURL when title changes (for immediate visual feedback)
+		if title and len(title.strip()) >= 3:  # Trigger after 3+ characters
+			try:
+				lookup = _lookup_asin_description_by_title(title)
+				if lookup and lookup.get("ImageURL"):
+					new_image_url = lookup.get("ImageURL")
+					# Only update if it's different from current to avoid unnecessary reruns
+					if st.session_state.get("current_image_url") != new_image_url:
+						st.session_state["current_image_url"] = new_image_url
+			except Exception:
+				pass
+		
 		suggestions = []
 		if title and len(title.strip()) >= 2 and backend_ok:
 			try:
@@ -744,11 +924,12 @@ def page_dashboard():
 		# Inline suggestions list (dropdown)
 		selected = None
 		if suggestions:
+			st.markdown("**🎯 Found these matching products:**")
 			options = ["Select a product…"] + [
 				f"{(s.get('Title') or '(untitled)')[:90]}" + (f" · {s.get('ASIN')}" if s.get('ASIN') else "")
 				for s in suggestions
 			]
-			choice = st.selectbox("Matches", options, index=0, key="title_matches")
+			choice = st.selectbox("Choose your product", options, index=0, key="title_matches")
 			if choice and choice != "Select a product…":
 				idx = options.index(choice) - 1
 				if 0 <= idx < len(suggestions):
@@ -759,69 +940,96 @@ def page_dashboard():
 			# Set flag to prevent rerun loops
 			st.session_state["_applying_suggestion"] = True
 			
-			# Store resolved ASIN/Description for submit
+			# Store resolved ASIN/Description/ImageURL for submit
 			st.session_state["_resolved_from_suggestion"] = {
 				"ASIN": selected.get("ASIN"),
 				"Description": selected.get("Description"),
+				"ImageURL": selected.get("ImageURL"),
 			}
 			selected_title = (selected.get("Title") or "").strip()
 			selected_desc = selected.get("Description")
-			# If description missing, try to enrich before scheduling prefill
-			if not selected_desc and selected_title:
+			selected_image = selected.get("ImageURL")
+			# If description or image missing, try to enrich before scheduling prefill
+			if (not selected_desc or not selected_image) and selected_title:
 				try:
 					look = _lookup_asin_description_by_title(selected_title)
-					selected_desc = (look or {}).get("Description")
+					if look:
+						selected_desc = selected_desc or look.get("Description")
+						selected_image = selected_image or look.get("ImageURL")
 				except Exception:
-					selected_desc = None
+					pass
 			# Schedule prefill for next run (must be before widgets are created)
-			st.session_state["_pending_prefill"] = {"title": selected_title, "desc": selected_desc}
-			st.caption(f"Selected: {selected_title} · ASIN: {selected.get('ASIN')}")
+			st.session_state["_pending_prefill"] = {
+				"title": selected_title, 
+				"desc": selected_desc,
+				"image_url": selected_image
+			}
+			st.caption(f"✅ Selected: {selected_title} · ASIN: {selected.get('ASIN')}")
+			# Force immediate image update by updating current_image_url right away
+			if selected_image:
+				st.session_state["current_image_url"] = selected_image
 			st.rerun()
 		elif st.session_state.get("_applying_suggestion", False):
 			# Clear the flag after rerun to allow future selections
 			st.session_state["_applying_suggestion"] = False
 
 		with st.form("add_review_form", clear_on_submit=True):
+			st.markdown("### 📊 Review Details")
 			cols = st.columns([1, 1])
 			with cols[0]:
 				if st_star_rating:
-					rating = st_star_rating("Rating", maxValue=5, defaultValue=4, key="star_rating")
+					rating = st_star_rating("⭐ Rating", maxValue=5, defaultValue=4, key="star_rating")
 				else:
-					rating = st.slider("Rating", 1, 5, 4)
+					rating = st.slider("⭐ Rating", 1, 5, 4, help="How would you rate this product?")
 			with cols[1]:
-				# Placeholder to keep balanced layout; could add future fields here
-				st.write("")
+				region = st.selectbox(
+					"📍 Your Location",
+					[
+						"Delhi",
+						"Mumbai", 
+						"Bangalore",
+						"Chennai",
+						"Kolkata",
+						"Other",
+					],
+					index=0,
+					help="This helps us provide location-specific insights"
+				)
 
-			region = st.selectbox(
-				"Region",
-				[
-					"Delhi",
-					"Mumbai",
-					"Bangalore",
-					"Chennai",
-					"Kolkata",
-					"Other",
-				],
-				index=0,
-			)
 			description = st.text_area(
-				"Product Description (auto if known)",
-				placeholder="Will auto-fill from DB by Title if known",
+				"📝 Product Description",
+				placeholder="This will auto-fill based on the product you select above...",
 				height=80,
 				key="desc_input",
+				help="Product details will be filled automatically when you select a product"
 			)
-			review_text = st.text_area("Review", placeholder="Tell us what you think…", height=120)
-			submitted = st.form_submit_button("Submit Review")
-		st.markdown('</div>', unsafe_allow_html=True)
+			review_text = st.text_area(
+				"💭 Your Review", 
+				placeholder="Share your experience with this product. What did you like? Any suggestions for improvement?", 
+				height=120,
+				help="Your detailed feedback helps other customers and improves our products"
+			)
+			
+			# Enhanced submit button with col layout for better visual appeal
+			col1, col2, col3 = st.columns([1, 2, 1])
+			with col2:
+				submitted = st.form_submit_button(
+					"🚀 Submit My Review", 
+					use_container_width=True,
+					help="Share your experience with other customers!"
+				)
+		st.markdown('</div></div>', unsafe_allow_html=True)
 
 	if submitted:
 		# Resolve ASIN/Description automatically from Title if needed
 		resolved_asin = None
 		resolved_desc = None
+		resolved_image = None
 		from_sess = st.session_state.pop("_resolved_from_suggestion", None)
 		if from_sess and from_sess.get("ASIN"):
 			resolved_asin = from_sess.get("ASIN")
 			resolved_desc = from_sess.get("Description")
+			resolved_image = from_sess.get("ImageURL")
 		# If user didn't explicitly select but there's exactly one live suggestion, use it as a fallback
 		elif "suggestions" in locals() and isinstance(suggestions, list) and len(suggestions) == 1:
 			_only = suggestions[0] or {}
@@ -829,6 +1037,7 @@ def page_dashboard():
 			if sa:
 				resolved_asin = sa
 				resolved_desc = _only.get("Description")
+				resolved_image = _only.get("ImageURL")
 				# Optionally sync the title to the suggested one if present
 				if _only.get("Title"):
 					st.session_state["title_input"] = _only.get("Title")
@@ -837,6 +1046,7 @@ def page_dashboard():
 			if lookup and lookup.get("ASIN"):
 				resolved_asin = lookup.get("ASIN")
 				resolved_desc = lookup.get("Description")
+				resolved_image = lookup.get("ImageURL")
 
 		# Compose payload
 		# Use Title from session to reflect any suggestion prefill
@@ -852,69 +1062,49 @@ def page_dashboard():
 		# Basic validation: need Title and Review, and must resolve ASIN
 		missing_core = [k for k in ("Title", "Review") if not payload.get(k)]
 		if missing_core:
-			st.error(f"Missing required fields: {', '.join(missing_core)}")
+			st.error(f"⚠️ Missing required fields: {', '.join(missing_core)}")
 		elif not payload["ASIN"]:
-			st.error("Couldn't auto-fill ASIN from Title. Please try a more specific Title.")
+			st.error("⚠️ Couldn't find product details. Please select from the dropdown suggestions or try a more specific product name.")
 		else:
 			try:
 				res = requests.post(f"{BACKEND_URL}/add_review/", json=payload, timeout=8)
 				if res.status_code == 201:
 					data = res.json()
-					st.success(f"Review submitted! DB id: {data.get('id')}")
-					with st.expander("Resolved fields"):
-						st.write({"ASIN": payload["ASIN"], "Description": payload.get("Description")})
-					with st.expander("Response data"):
-						st.json(data)
+					st.success(f"🎉 Thank you for your review! Successfully submitted with ID: {data.get('id')}")
+					
+					# Update current image URL for display if we have one
+					if resolved_image:
+						st.session_state["current_image_url"] = resolved_image
+					
+					# Enhanced success info with better styling
+					st.markdown("### 📋 Review Summary")
+					col1, col2, col3 = st.columns(3)
+					with col1:
+						st.info(f"🏷️ **Product ASIN**\n{payload['ASIN']}")
+					with col2:
+						st.info(f"⭐ **Your Rating**\n{rating}/5 stars")
+					with col3:
+						st.info(f"🔄 **Status**\nAuto-processed")
+					
+					st.balloons()  # Celebration animation
+					
+					# Helpful next steps
+					st.markdown("### 🎯 What's Next?")
+					st.markdown("""
+					- ✅ Your review is now part of our system
+					- 🔍 It will help improve our products and services
+					- 🤖 Visit our **Chat Assistant** for any questions
+					- 📝 Feel free to review more products!
+					""")
 				else:
 					try:
 						detail = res.json()
 					except Exception:
 						detail = res.text
-					st.error(f"Failed to submit review ({res.status_code}): {detail}")
+					st.error(f"❌ Failed to submit review ({res.status_code}): {detail}")
 			except Exception as e:
-				st.error(f"Error contacting backend: {e}")
-
-	# -------------------- Simple Status Box -------------------
-	st.markdown("---")
-	st.caption("System status")
-	status_cols = st.columns(3)
-	status_cols[0].metric("Backend host", BACKEND_HOST)
-	status_cols[1].metric("Backend port", BACKEND_PORT)
-	status_cols[2].metric("API healthy", "✅" if _is_backend_healthy() else "❌")
-
-	# Quick controls and diagnostics
-	ctrl_col, _, _ = st.columns([1, 1, 1])
-	if ctrl_col.button("Run Pipeline Now"):
-		try:
-			r = requests.post(f"{BACKEND_URL}/trigger_pipeline", timeout=5)
-			if r.status_code == 202:
-				st.success("Pipeline queued to run in the background.")
-			else:
-				st.error(f"Failed to queue pipeline: {r.status_code} {r.text}")
-		except Exception as e:
-			st.error(f"Error contacting backend: {e}")
-
-	with st.expander("View pipeline log"):
-		log_path = PROJECT_ROOT / "logs" / "pipeline.log"
-		if log_path.exists():
-			try:
-				content = log_path.read_text(errors="ignore")[-800:]
-				st.code(content or "(log is empty)", language="text")
-			except Exception as e:
-				st.warning(f"Could not read log file: {e}")
-		else:
-			st.info("No pipeline log found yet. Submit a review or run the pipeline to create it.")
-
-	with st.expander("View backend log"):
-		be_log_path = PROJECT_ROOT / "logs" / "backend.log"
-		if be_log_path.exists():
-			try:
-				content = be_log_path.read_text(errors="ignore")[-800:]
-				st.code(content or "(log is empty)", language="text")
-			except Exception as e:
-				st.warning(f"Could not read backend log file: {e}")
-		else:
-			st.info("No backend log yet. It will appear after Streamlit starts the API server.")
+				st.error(f"🔌 Connection error: Please check your internet connection and try again.")
+				st.error(f"Technical details: {e}")
 
 
 def page_chat():
@@ -925,7 +1115,11 @@ def page_chat():
 	with st.sidebar:
 		st.header("🔧 Chat Controls")
 		if ROUTER_AVAILABLE and st.session_state.get("router"):
-			st.info(f"**Session ID:** {st.session_state.thread_id[:20]}...")
+			thread_id = st.session_state.get("thread_id")
+			if thread_id:
+				st.info(f"**Session ID:** {thread_id[:20]}...")
+			else:
+				st.info("**Session ID:** Initializing...")
 			if hasattr(st.session_state, "is_continuing_conversation"):
 				if st.session_state.is_continuing_conversation:
 					st.success(
@@ -953,35 +1147,6 @@ def page_chat():
 			if st.button("📊 Analytics"):
 				st.session_state.show_analytics = not st.session_state.get("show_analytics", False)
 				st.rerun()
-
-		st.markdown("---")
-		st.header("🔍 Search History")
-		search_query = st.text_input("Search conversations:", placeholder="Enter search terms...")
-		search_type = st.selectbox("Search in:", ["all", "qna", "complaint"])
-		if st.button("Search") and search_query:
-			with st.spinner("Searching..."):
-				results = chat_search_history(search_query, search_type)
-				st.session_state.search_results = results
-				st.session_state.search_query = search_query
-		if hasattr(st.session_state, "search_results") and st.session_state.search_results:
-			st.markdown("---")
-			st.subheader(f"Search Results for '{st.session_state.search_query}'")
-			for i, result in enumerate(st.session_state.search_results[:5]):
-				if result["type"] == "complaint":
-					st.write(f"**{i+1}.** Complaint: {result['complaint_type']}")
-					st.caption(
-						result["description"][:100] + "..."
-						if len(result["description"]) > 100
-						else result["description"]
-					)
-				else:
-					st.write(f"**{i+1}.** {result['role']}: {result['content'][:50]}...")
-				st.caption(f"📅 {result['timestamp']}")
-				st.markdown("---")
-			if len(st.session_state.search_results) > 5:
-				st.info(
-					f"+ {len(st.session_state.search_results) - 5} more results in main area"
-				)
 
 		st.markdown("---")
 		# Removed chat width/visibility controls; chat now uses full width on this page
@@ -1036,17 +1201,6 @@ def page_chat():
 		st.error("Chat system is not available.")
 
 	st.markdown("---")
-	st.subheader("ℹ️ Quick Info")
-	if st.session_state.get("router"):
-		current_state = st.session_state.router.get_conversation_state()
-		st.write("**Current Status:**")
-		st.write(f"Intent: {current_state.get('current_intent', 'None')}")
-		st.write(f"Messages: {current_state.get('message_count', 0)}")
-		st.write(f"Active: {'Yes' if current_state.get('conversation_active') else 'No'}")
-		if current_state.get("complaint_active"):
-			st.warning("🚨 Complaint in progress")
-
-	st.markdown("---")
 	st.subheader("📝 Sample Queries")
 	sample_queries = [
 		"What beauty products do you recommend?",
@@ -1056,21 +1210,26 @@ def page_chat():
 		"Reset our conversation",
 		"Search previous conversations about returns",
 	]
-	for query in sample_queries:
-		if st.button(f"💬 {query}", key=f"sample_{hash(query)}"):
-			if st.session_state.get("router") and st.session_state.get("conversation_active", True):
-				st.session_state.messages.append({"role": "user", "content": query})
-				enhanced_q = chat_enhance_input(query)
-				with st.spinner("Processing…"):
-					try:
-						response = st.session_state.router.process_message(enhanced_q)
-						st.session_state.messages.append({"role": "assistant", "content": response})
-						if hasattr(st.session_state.router, "state") and "messages" in st.session_state.router.state:
-							st.session_state.router.state["messages"] = st.session_state.messages.copy()
-							st.session_state.router._save_state()
-						st.rerun()
-					except Exception as e:
-						st.error(f"Error: {e}")
+	
+	# Organize queries in columns for better space utilization
+	cols = st.columns(3)  # 3 columns to fit 6 queries (2 per column)
+	for i, query in enumerate(sample_queries):
+		col_idx = i % 3  # Cycle through columns
+		with cols[col_idx]:
+			if st.button(f"💬 {query}", key=f"sample_{hash(query)}"):
+				if st.session_state.get("router") and st.session_state.get("conversation_active", True):
+					st.session_state.messages.append({"role": "user", "content": query})
+					enhanced_q = chat_enhance_input(query)
+					with st.spinner("Processing…"):
+						try:
+							response = st.session_state.router.process_message(enhanced_q)
+							st.session_state.messages.append({"role": "assistant", "content": response})
+							if hasattr(st.session_state.router, "state") and "messages" in st.session_state.router.state:
+								st.session_state.router.state["messages"] = st.session_state.messages.copy()
+								st.session_state.router._save_state()
+							st.rerun()
+						except Exception as e:
+							st.error(f"Error: {e}")
 
 	# Optional analytics section
 	if st.session_state.get("show_analytics"):
