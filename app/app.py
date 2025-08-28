@@ -1378,12 +1378,12 @@ def page_chat():
 	st.markdown("---")
 	st.subheader("📝 Sample Queries")
 	sample_queries = [
-		"What beauty products do you recommend?",
 		"I have a complaint about my order",
-		"What complaints have I filed before?",
+		"How to return a product?",
 		"What did we discuss about skincare?",
-		"Reset our conversation",
-		"Search previous conversations about returns",
+		"What beauty products do you recommend?",
+		"Compare AHAVA Clineral X-Zem Hand Cream & AHAVA Men's Dead Sea Mineral Hand Cream",
+		"Can you summarize our chat?",
 	]
 	
 	# Organize queries in columns for better space utilization

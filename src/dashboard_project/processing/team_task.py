@@ -8,8 +8,7 @@ import os
 # Add the parent directory to sys.path to import from database module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.queries import fetch_table
-from database.complaints import sync_to_main_database, main as complaints_main
+from database.queries import fetch_table, sync_complaints_from_customer_db
 from database.connector import get_customer_db_connection
 
 # Try to import pytz, if not available, provide fallback
@@ -28,9 +27,12 @@ def refresh_complaints_data() -> bool:
         bool: True if successful, False otherwise
     """
     try:
-        # Use the main function from complaints.py which handles the full sync process
-        complaints_main()
-        st.success("Successfully refreshed complaints data from customer database")
+        # Use the new queries sync function to refresh complaints into main DB
+        n = sync_complaints_from_customer_db("complaints")
+        if n > 0:
+            st.success(f"Successfully refreshed complaints data ({n} rows) from customer database")
+        else:
+            st.info("Refresh completed but no rows were processed")
         return True
     except Exception as e:
         st.error(f"Failed to refresh complaints data: {e}")

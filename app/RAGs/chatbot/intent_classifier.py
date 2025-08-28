@@ -36,93 +36,64 @@ Your task is to analyze the user's message and classify their intent into one of
 
 Classify as complaint when the user is:
 
-Reporting a problem with an order, billing, delivery, or product.
-
-Experiencing technical issues or product quality concerns.
-
-Wanting to file a formal complaint that needs to be logged and tracked.
-
-Asking for updates on a previously submitted complaint.
-
-Referring to a past complaint or issue in a way that requires follow-up.
-
-Important: If the user starts a complaint and then writes "yes" after being asked to confirm, treat that as an indicator to stop the complaint process and switch to qna instead.
+- Reporting a problem with an order, billing, delivery, or product.  
+- Experiencing technical issues or product quality concerns.  
+- Wanting to file a formal complaint that needs to be logged and tracked.  
+- Asking for updates on a previously submitted complaint.  
+- Referring to a past complaint or issue in a way that requires follow-up.  
+- Confirming a summarized complaint with "yes" or similar → this is a confirmation to proceed with logging the complaint (remain in complaint).  
 
 (2) qna
 
 Classify as qna when the user is:
 
-Asking general questions (especially about beauty products).
-
-Seeking product recommendations or comparisons.
-
-Making casual conversation or greetings.
-
-Asking informational or exploratory queries.
-
-Referring to previous general conversations.
-
-Switching from a complaint to general questions (see "yes" confirmation note under (1)).
+- Asking general questions (especially about beauty products).  
+- Seeking product recommendations or comparisons.  
+- Making casual conversation or greetings.  
+- Asking informational or exploratory queries.  
+- Referring to previous general conversations.  
 
 (3) abort
 
 Classify as abort when the user wants to stop the complaint process without completing it, and switch to general Q&A.
 
-Look for phrases like:
-
-"stop"
-
-"cancel"
-
-"never mind"
-
-"forget it"
-
-"I changed my mind"
-
-"let's do something else"
+Look for phrases like:  
+- "stop"  
+- "cancel"  
+- "never mind"  
+- "forget it"  
+- "I changed my mind"  
+- "let's do something else"  
 
 (4) reset
 
 Classify as reset when the user wants to completely reset the conversation, erase history, and start fresh.
 
-Look for phrases like:
-
-"start over"
-
-"reset"
-
-"clear history"
-
-"begin again"
-
-"new conversation"
+Look for phrases like:  
+- "start over"  
+- "reset"  
+- "clear history"  
+- "begin again"  
+- "new conversation"  
 
 (5) exit
 
 Classify as exit when the user clearly wants to end the conversation entirely.
 
-Look for phrases like:
+Look for phrases like:  
+- "bye"  
+- "goodbye"  
+- "exit"  
+- "quit"  
+- "end this"  
+- "stop talking"  
 
-"bye"
+Additional Instructions:
 
-"goodbye"
-
-"exit"
-
-"quit"
-
-"end this"
-
-"stop talking"
-
-Additional Instructions
-
-Always consider the entire conversation history when determining intent.
-
-Do not respond to the user or generate a reply. Simply return the classification.
-
-Output one of the following exactly: complaint, qna, abort, reset, exit."""
+- Always consider the entire conversation history when determining intent.  
+- Do not respond to the user or generate a reply. Simply return the classification.  
+- Output one of the following exactly: complaint, qna, abort, reset, exit.  
+"""
 
     def _init_database(self):
         """Initialize database tables for conversation history."""
