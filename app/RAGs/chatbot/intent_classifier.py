@@ -13,13 +13,6 @@ class IntentRouter:
     
     def __init__(self, db_path: str = "conversation_memory.db", thread_id: str = "user_session"):
         self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-        # self.llm = ChatOpenAI(
-		# model="meta-llama/llama-3-70b-instruct",
-		# openai_api_base="https://openrouter.ai/api/v1",
-		# openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-		# temperature=0.2,
-		# max_tokens=1024
-	# )
         self.router_llm = self.llm.with_structured_output(UserIntent)
         
         # SQLite setup for persistence
@@ -69,7 +62,7 @@ Asking informational or exploratory queries.
 
 Referring to previous general conversations.
 
-Switching from a complaint to general questions (see “yes” confirmation note under (1)).
+Switching from a complaint to general questions (see "yes" confirmation note under (1)).
 
 (3) abort
 
@@ -348,19 +341,18 @@ Output one of the following exactly: complaint, qna, abort, reset, exit."""
         return response
 
     def handle_qna(self, user_message: str) -> str:
-        """Handle Q&A using the existing agent with conversation context."""
+        """Handle Q&A by passing the message and conversation history to the agent."""
         try:
-            # Create context-aware message for the agent
-            context = self._get_conversation_context()
-            if context:
-                enhanced_message = f"Context from previous conversations:\n{context}\n\nCurrent question: {user_message}"
-            else:
-                enhanced_message = user_message
+            # Get only the last 5 messages to avoid overwhelming the agent
+            recent_history = self.state.get("messages", [])[-10:]  # Last 5 exchanges (10 messages)
             
-            response = run_agent(enhanced_message)
+            # Pass the current message and history to run_agent
+            response = run_agent(query=user_message, history=recent_history)
+            
             self.state["total_qna"] += 1
             return response
-        except ImportError:
+        except Exception as e:
+            print(f"Error in handle_qna: {e}")
             return "I apologize, but I'm having trouble accessing the Q&A system. Please try again later."
 
     def process_message(self, user_message: str) -> str:

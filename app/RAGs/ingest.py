@@ -1,6 +1,7 @@
 import json
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 try:
     from langchain_chroma import Chroma  # type: ignore
 except Exception:  # pragma: no cover
@@ -10,7 +11,16 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from tqdm import tqdm  # Import tqdm for progress bars
 
 load_dotenv()
-os.environ['HF_HOME'] = '/Users/nike/Documents/Data Science Work/Practice/Langchain/huggingface_cache'
+BASE_DIR = Path(__file__).resolve().parent
+
+# 1. Create a path to a new cache directory inside your project
+CACHE_DIR = BASE_DIR / ".huggingface_cache"
+
+# 2. Make sure the directory actually exists
+CACHE_DIR.mkdir(exist_ok=True)
+
+# 3. Set HF_HOME to this new, portable path
+os.environ['HF_HOME'] = str(CACHE_DIR)
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 # make the current folder the working directory

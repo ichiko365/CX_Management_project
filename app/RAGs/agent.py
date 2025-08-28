@@ -2,30 +2,28 @@ from __future__ import annotations
 
 import os
 import asyncio
-from typing import List, Deque, Dict, Tuple, Optional
-from collections import deque
-
+from typing import List, Dict, Optional
 from langchain_openai import ChatOpenAI
-# import Ollama model
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
+
 try:
-	import tomllib as tomli  # Python 3.11+
-except Exception:  # pragma: no cover
-	tomli = None
+    import tomllib as tomli  # Python 3.11+
+except Exception:
+    tomli = None
 
 # Robust import for both package and script execution
 try:
-	from .qa_chain import TOOLS, answer_product_question, recommend_products, compare_products, get_faq_guidance  # type: ignore
+    from .qa_chain import TOOLS, answer_product_question, recommend_products, compare_products, get_faq_guidance
 except Exception:
-	try:
-		from RAGs.qa_chain import TOOLS, answer_product_question, recommend_products, compare_products, get_faq_guidance  # type: ignore
-	except Exception:
-		import sys, pathlib
-		sys.path.append(str(pathlib.Path(__file__).resolve().parent))
-		from qa_chain import TOOLS, answer_product_question, recommend_products, compare_products, get_faq_guidance  # type: ignore
+    try:
+        from RAGs.qa_chain import TOOLS, answer_product_question, recommend_products, compare_products, get_faq_guidance
+    except Exception:
+        import sys, pathlib
+        sys.path.append(str(pathlib.Path(__file__).resolve().parent))
+        from qa_chain import TOOLS, answer_product_question, recommend_products, compare_products, get_faq_guidance
 
 def _ensure_openrouter_api_key() -> None:
     """Ensure OPENROUTER_API_KEY is available via env, .env, or Streamlit secrets."""
@@ -62,29 +60,16 @@ def _ensure_openrouter_api_key() -> None:
             pass
 
 def _llm() -> ChatOpenAI:
-	_ensure_openrouter_api_key()
-	# Use OpenRouter with Llama 70B
-	model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
-	# Tool-calling enabled by default for OpenAI Chat models via LangChain
-	return ChatOpenAI(model=model, temperature=0.2)
-	# return ChatOpenAI(
-	# 	model="meta-llama/llama-3-70b-instruct",
-	# 	openai_api_base="https://openrouter.ai/api/v1",
-	# 	openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-	# 	temperature=0.2,
-	# 	max_tokens=1024
-	# )
-
-# def _llm() -> ChatOllama:
-# 	model = os.getenv("OLLAMA_MODEL", "llama3")
-# 	return ChatOllama(model='llama3-groq-tool-use')
+    _ensure_openrouter_api_key()
+    model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
+    return ChatOpenAI(model=model, temperature=0.2)
 
 AGENT_SYSTEM_PROMPT = (
     "You are a friendly and knowledgeable beauty advisor AI, here to help customers with product Q&A."
     "\nGoals:"
     "\n- Chat naturally, the way a helpful store consultant would. Keep it concise, but not robotic."
-	"\n- When asked general questions like 'hello, hi, good morning', respond warmly and helpfully with greetings only, nothing more like give answer product related things."
-    "\n- Answer questions about beauty products using the retrieved context only. If something isn’t in the data, say so honestly and briefly."
+    "\n- When asked general questions like 'hello, hi, good morning', respond warmly and helpfully with greetings only, nothing more like give answer product related things."
+    "\n- Answer questions about beauty products using the retrieved context only. If something isn't in the data, say so honestly and briefly."
     "\n- Detect the product from free-text mentions without requiring exact ASINs."
     "\n- Recommend similar products when asked, and explain in plain language why they are similar."
     "\n- Compare products side by side with clear, easy-to-scan bullet points."
@@ -92,207 +77,205 @@ AGENT_SYSTEM_PROMPT = (
     "\nRules:"
     "\n- Always prefer using the provided tools (answer_product_question, recommend_products, compare_products) when relevant."
     "\n- Never invent details that are not in the product context. If context is insufficient, acknowledge it and give a helpful fallback."
-	"\n- Never use your own knowledge or opinions of beauty products."
-	"\n- Give note/acknowledgment when context is insufficient."
+    "\n- Never use your own knowledge or opinions of beauty products."
+    "\n- Give note/acknowledgment when context is insufficient."
     "\n- Keep responses engaging and medium-length: clear, friendly, and useful without being wordy."
     "\n- When recommending or comparing, add a touch of helpful reasoning (e.g., 'this one mentions waterproof in the description')."
-	"\n- Don't ask in the end something like ' If you have specific preferences like budget or features, let me know for more tailored suggestions!'"
-
+    "\n- Don't ask in the end something like ' If you have specific preferences like budget or features, let me know for more tailored suggestions!'"
 )
 
+def _is_greeting_or_casual(query: str) -> bool:
+    """Use LLM to detect if the query is a greeting or casual conversation that doesn't need tools."""
+    llm = _llm()
+    
+    # Create a focused prompt for greeting detection
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a conversation classifier. Your task is to determine if a message is a greeting, casual acknowledgment, or requires product-related assistance.
 
-# ---- Lightweight conversation memory (last N turns) ----
-# Default: keep last 3 turns (human+ai pairs). Override via env or at call time.
-_DEFAULT_TURNS = int(os.getenv("AGENT_HISTORY_TURNS", "3"))
-_TURNS: int = max(0, _DEFAULT_TURNS)
-_MEMORY: Dict[str, Deque[Tuple[str, str]]] = {}
-_LAST_PRODUCT: Dict[str, Dict[str, str]] = {}
+Classify as 'greeting' if the message is:
+- A greeting (hello, hi, good morning, etc.)
+- A farewell (bye, goodbye, see you later, etc.)
+- A thank you or acknowledgment (thanks, okay, great, etc.)
+- A casual social interaction (how are you, what's up, etc.)
+- A simple acknowledgment (ok, cool, nice, perfect, etc.)
 
-def set_history_limit(turns: int) -> None:
-	"""Change memory limit globally (number of human+ai turns)."""
-	global _TURNS
-	_TURNS = max(0, int(turns))
+Classify as 'product_query' if the message:
+- Asks about any product, feature, or service
+- Contains questions that need information
+- Requests recommendations, comparisons, or explanations
+- Is anything other than a simple greeting or acknowledgment
 
-def clear_history(session_id: str = "default") -> None:
-	"""Clear stored conversation for a session."""
-	_MEMORY.pop(session_id, None)
-	_LAST_PRODUCT.pop(session_id, None)
+Respond with ONLY one word: either 'greeting' or 'product_query'."""),
+        ("human", query)
+    ])
+    
+    try:
+        result = llm.invoke(prompt.format_messages())
+        classification = result.content.strip().lower()
+        return classification == "greeting"
+    except Exception as e:
+        print(f"Error in greeting detection: {e}")
+        # Fallback to False to ensure product queries are handled
+        return False
 
-def _get_buffer(session_id: str) -> Deque[Tuple[str, str]]:
-	if session_id not in _MEMORY:
-		_MEMORY[session_id] = deque()
-	return _MEMORY[session_id]
+def _get_greeting_response(query: str) -> str:
+    """Use LLM to generate an appropriate conversational response for greetings."""
+    llm = _llm()
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a friendly beauty product advisor. Generate a warm, natural response to the customer's greeting or casual message.
 
-def _append_turn(session_id: str, human: str, ai: str, turns_limit: Optional[int] = None) -> None:
-	buf = _get_buffer(session_id)
-	buf.append((human, ai))
-	limit = _TURNS if turns_limit is None else max(0, int(turns_limit))
-	# Keep only last `limit` turns
-	while len(buf) > limit:
-		buf.popleft()
+Keep your response:
+- Brief and conversational (1-2 sentences max)
+- Focused on beauty products when offering help
+- Natural and friendly, not robotic
+- End with an offer to help with beauty products if appropriate
 
-def get_history_messages(session_id: str = "default", turns_limit: Optional[int] = None):
-	"""Return history as LangChain messages [HumanMessage, AIMessage, ...]."""
-	buf = list(_get_buffer(session_id))
-	limit = _TURNS if turns_limit is None else max(0, int(turns_limit))
-	if limit:
-		buf = buf[-limit:]
-	msgs = []
-	for h, a in buf:
-		msgs.append(HumanMessage(content=h))
-		msgs.append(AIMessage(content=a))
-	return msgs
-
-def get_history_serialized(session_id: str = "default", turns_limit: Optional[int] = None):
-	"""Return history as a list of dicts with role and content."""
-	msgs = get_history_messages(session_id, turns_limit)
-	out = []
-	for m in msgs:
-		role = "human" if isinstance(m, HumanMessage) else ("ai" if isinstance(m, AIMessage) else "system")
-		out.append({"role": role, "content": m.content})
-	return out
-
-def _update_last_product(session_id: str, text: str) -> None:
-	"""Parse and store last mentioned product from a standardized heading if present.
-
-	Looks for lines like: 'Product: <Title> (ASIN: <ASIN>)'
-	"""
-	import re
-	m = re.search(r"^\s*Product:\s*(.+?)\s*\(ASIN:\s*([A-Z0-9]+)\)\s*$", text, flags=re.I|re.M)
-	if m:
-		title = m.group(1).strip()
-		asin = m.group(2).strip()
-		_LAST_PRODUCT[session_id] = {"title": title, "asin": asin}
-
-def get_last_product(session_id: str = "default") -> Optional[Dict[str, str]]:
-	return _LAST_PRODUCT.get(session_id)
-
-def _is_last_product_query(q: str) -> bool:
-	import re
-	# include common typo 'eariler'
-	return bool(re.search(r"\b(what|which)\s+product\s+(did\s+)?(i|we)\s+(mention|say|talk\s+about)\s+(eariler|earlier|before|previously)\b", q, flags=re.I))
+Do not ask multiple questions or be overly enthusiastic."""),
+        ("human", query)
+    ])
+    
+    try:
+        result = llm.invoke(prompt.format_messages())
+        return result.content.strip()
+    except Exception as e:
+        print(f"Error generating greeting response: {e}")
+        # Fallback response
+        return "Hello! I'm here to help you with beauty product questions. What would you like to know?"
 
 def _clean_faq_snippets(snips: str) -> str:
-	"""Strip any leading 'Q:' lines and keep only guidance-like content."""
-	if not snips:
-		return ""
-	lines = []
-	for ln in snips.splitlines():
-		if ln.strip().startswith("Q:"):
-			continue
-		# Remove a leading 'A: '
-		if ln.strip().startswith("A:"):
-			ln = ln.split(":", 1)[1].strip()
-		lines.append(ln)
-	return "\n".join(lines).strip()
+    """Strip any leading 'Q:' lines and keep only guidance-like content."""
+    if not snips:
+        return ""
+    lines = []
+    for ln in snips.splitlines():
+        if ln.strip().startswith("Q:"):
+            continue
+        if ln.strip().startswith("A:"):
+            ln = ln.split(":", 1)[1].strip()
+        lines.append(ln)
+    return "\n".join(lines).strip()
 
 def _quick_intent_detection(query: str) -> Optional[str]:
-	"""Fast intent detection to optimize tool selection. Returns None if uncertain."""
-	q = query.lower()
-	if any(w in q for w in ["recommend", "similar", "like", "alternatives", "suggest", "show me", "find me"]):
-		return "recommend"
-	elif any(w in q for w in ["compare", "vs", "versus", "difference", "between", "which is better"]):
-		return "compare"
-	elif any(w in q for w in ["what", "how", "why", "tell me", "explain", "features", "benefits", "specs"]):
-		return "question"
-	else:
-		return None  # Let LLM decide when uncertain
+    """Use LLM-based intent detection to classify the query."""
+    # First check if it's a greeting/casual - these shouldn't trigger tools
+    if _is_greeting_or_casual(query):
+        return "greeting"
+    
+    # For product queries, use LLM to classify intent
+    llm = _llm()
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are an intent classifier for a beauty product Q&A system. Analyze the user's message and classify it into one of these categories:
 
+1. 'recommend': User wants product recommendations, suggestions, or similar products
+   - Examples: "recommend a moisturizer", "suggest something for dry skin", "show me similar products", "find me alternatives"
+
+2. 'compare': User wants to compare products or understand differences
+   - Examples: "compare these two", "which is better", "what's the difference between", "product A vs product B"
+
+3. 'question': User has a specific question about products, features, or information
+   - Examples: "what ingredients are in this", "how does it work", "tell me about", "explain the benefits"
+
+4. 'uncertain': The intent is unclear or doesn't fit the above categories
+
+Respond with ONLY one word: 'recommend', 'compare', 'question', or 'uncertain'."""),
+        ("human", query)
+    ])
+    
+    try:
+        result = llm.invoke(prompt.format_messages())
+        intent = result.content.strip().lower()
+        
+        if intent in ["recommend", "compare", "question"]:
+            return intent
+        else:
+            return None  # Let the full agent handle uncertain cases
+    except Exception as e:
+        print(f"Error in intent detection: {e}")
+        return None  # Fallback to full agent processing
 
 def get_agent():
-	"""Return an agent-like runnable that calls tools as needed."""
-	llm = _llm().bind_tools(TOOLS)
-	prompt = ChatPromptTemplate.from_messages([
-		("system", AGENT_SYSTEM_PROMPT),
-	("placeholder", "{history}"),
-		("human", "{input}"),
-	])
-	return prompt | llm
+    """Return an agent-like runnable that calls tools as needed."""
+    llm = _llm().bind_tools(TOOLS)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", AGENT_SYSTEM_PROMPT),
+        ("placeholder", "{history}"),
+        ("human", "{input}"),
+    ])
+    return prompt | llm
 
+def run_agent(query: str, history: List[Dict[str, str]] = None) -> str:
+    """Single-turn interaction: routes to tools and returns final text."""
+    
+    # Convert history format if needed
+    history_msgs = []
+    if history:
+        for msg in history:
+            if msg["role"] == "user":
+                history_msgs.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                history_msgs.append(AIMessage(content=msg["content"]))
+    
+    # Fast intent detection BEFORE LLM tool selection
+    detected_intent = _quick_intent_detection(query)
+    
+    # Handle greetings and casual conversation without tools
+    if detected_intent == "greeting":
+        return _get_greeting_response(query)
+    
+    # Route directly to tools based on intent detection
+    if detected_intent == "recommend":
+        output = recommend_products.invoke({"query": query})
+    elif detected_intent == "compare":
+        output = compare_products.invoke({"query": query})
+    elif detected_intent == "question":
+        output = answer_product_question.invoke({"question": query})
+    else:
+        # Fallback to LLM tool selection when intent is uncertain
+        agent = get_agent()
+        result = agent.invoke({"input": query, "history": history_msgs})
 
-def run_agent(query: str, session_id: str = "default", history_limit: Optional[int] = None) -> str:
-	"""Single-turn interaction: routes to tools and returns final text."""
-	# Handle recall of last-mentioned product directly from memory
-	if _is_last_product_query(query):
-		last = get_last_product(session_id)
-		if not last:
-			# try to salvage from text in existing history turns
-			for h, a in reversed(list(_get_buffer(session_id))):
-				import re
-				m = re.search(r"^\s*Product:\s*(.+?)\s*\(ASIN:\s*([A-Z0-9]+)\)\s*$", a, flags=re.I|re.M)
-				if m:
-					last = {"title": m.group(1).strip(), "asin": m.group(2).strip()}
-					_LAST_PRODUCT[session_id] = last
-					break
-		if last:
-			ans = f"The previous product you mentioned was {last['title']} (ASIN: {last['asin']})."
-		else:
-			ans = "I couldn't find a previously mentioned product in this chat."
-		_append_turn(session_id, query, ans, turns_limit=history_limit)
-		return ans
-	
-	# Fast intent detection BEFORE LLM tool selection
-	detected_intent = _quick_intent_detection(query)
-	
-	# Route directly to tools based on intent detection, or fallback to LLM if uncertain
-	if detected_intent == "recommend":
-		output = recommend_products.invoke({"query": query})
-	elif detected_intent == "compare":
-		output = compare_products.invoke({"query": query})
-	elif detected_intent == "question":
-		output = answer_product_question.invoke({"question": query})
-	else:
-		# Fallback to LLM tool selection when intent is uncertain
-		agent = get_agent()
-		history_msgs = get_history_messages(session_id=session_id, turns_limit=history_limit)
-		result = agent.invoke({"input": query, "history": history_msgs})
+        # If the model decided to call a tool
+        if hasattr(result, "tool_calls") and result.tool_calls:
+            call = result.tool_calls[0]
+            name = call["name"]
+            args = call.get("args", {})
 
-		# If the model decided to call a tool, LangChain returns a tool-call message.
-		if hasattr(result, "tool_calls") and result.tool_calls:
-			call = result.tool_calls[0]
-			name = call["name"]
-			args = call.get("args", {})
+            if name == "answer_product_question":
+                output = answer_product_question.invoke(args)
+            elif name == "recommend_products":
+                output = recommend_products.invoke(args)
+            elif name == "compare_products":
+                output = compare_products.invoke(args)
+            else:
+                output = "I'm not sure how to help with that."
+        else:
+            # No tool call; return model's direct answer
+            return getattr(result, "content", "I couldn't process that request.")
 
-			if name == "answer_product_question":
-				output = answer_product_question.invoke(args)
-			elif name == "recommend_products":
-				output = recommend_products.invoke(args)
-			elif name == "compare_products":
-				output = compare_products.invoke(args)
-			else:
-				output = "I'm not sure how to help with that."
-		else:
-			# No tool call; return model's direct answer
-			direct = getattr(result, "content", "I couldn't process that request.")
-			_update_last_product(session_id, direct)
-			_append_turn(session_id, query, direct, turns_limit=history_limit)
-			return direct
-
-	# Optionally, send tool output back to the model for a final polish with FAQ guidance
-	llm = _llm()
-	# Get FAQ guidance for additional context in final polish
-	faq_snippets = get_faq_guidance(query, k=2)
-	faq_snippets = _clean_faq_snippets(faq_snippets)
-	# If the user asked for features/benefits/specs, ensure bullet-pointed features
-	features_mode = any(w in query.lower() for w in ["feature", "features", "benefit", "benefits", "spec", "specs", "highlights"]) 
-	final = llm.invoke([
-		SystemMessage(content=(
-			"You will rewrite a tool result into a concise, user-friendly answer without adding new information. "
-			"Respect these constraints strictly: do not invent facts, do not copy any 'Q:' or 'A:' labels, and do not start with a question. "
-			"When helpful, align tone/structure with these FAQ snippets (if any). If they conflict with the tool result, ignore them.\n\n"
-			f"FAQ style guidance:\n{faq_snippets}\n\n"
-			+ ("If the user's request was for features/benefits/specs, present a short bullet list of key features extracted from the tool output, using the tool's wording where possible. " if features_mode else "")
-			+ "If the tool output contains a line like 'Product: <Title> (ASIN: <ASIN>)', keep it as the first line and then provide the answer."
-		)),
-		HumanMessage(content=str(output)),
-	])
-	final_text = getattr(final, "content", str(output))
-	_update_last_product(session_id, final_text)
-	_append_turn(session_id, query, final_text, turns_limit=history_limit)
-	return final_text
-
+    # Polish tool output with FAQ guidance
+    llm = _llm()
+    faq_snippets = get_faq_guidance(query, k=2)
+    faq_snippets = _clean_faq_snippets(faq_snippets)
+    
+    features_mode = any(w in query.lower() for w in ["feature", "features", "benefit", "benefits", "spec", "specs", "highlights"])
+    
+    final = llm.invoke([
+        SystemMessage(content=(
+            "You will rewrite a tool result into a concise, user-friendly answer without adding new information. "
+            "Respect these constraints strictly: do not invent facts, do not copy any 'Q:' or 'A:' labels, and do not start with a question. "
+            "When helpful, align tone/structure with these FAQ snippets (if any). If they conflict with the tool result, ignore them.\n\n"
+            f"FAQ style guidance:\n{faq_snippets}\n\n"
+            + ("If the user's request was for features/benefits/specs, present a short bullet list of key features extracted from the tool output, using the tool's wording where possible. " if features_mode else "")
+            + "If the tool output contains a line like 'Product: <Title> (ASIN: <ASIN>)', keep it as the first line and then provide the answer."
+        )),
+        HumanMessage(content=str(output)),
+    ])
+    
+    return getattr(final, "content", str(output))
 
 # for testing
 if __name__ == "__main__":
-	query = input("Enter your query: ")
-	print(run_agent(query))
+    query = input("Enter your query: ")
+    print(run_agent(query))
