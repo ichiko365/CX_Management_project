@@ -3,7 +3,7 @@ from typing import List, Dict
 import logging
 
 # Use your custom logger
-from cx_dashboard.logger import logger
+from src.logger import logger
 
 class DataTransformation:
     """

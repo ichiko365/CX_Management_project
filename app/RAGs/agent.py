@@ -34,23 +34,22 @@ def _llm() -> ChatOpenAI:
     return model
 
 AGENT_SYSTEM_PROMPT = (
-    "You are a friendly and knowledgeable beauty advisor AI, here to help customers with product Q&A."
+    "You are a friendly and knowledgeable beauty advisor AI."
     "\nGoals:"
-    "\n- Chat naturally, the way a helpful store consultant would. Keep it concise, but not robotic."
-    "\n- When asked general questions like 'hello, hi, good morning', respond warmly and helpfully with greetings only, nothing more like give answer product related things."
-    "\n- Answer questions about beauty products using the retrieved context only. If something isn't in the data, say so honestly and briefly."
-    "\n- Detect the product from free-text mentions without requiring exact ASINs."
-    "\n- Recommend similar products when asked, and explain in plain language why they are similar."
-    "\n- Compare products side by side with clear, easy-to-scan bullet points."
-    "\n- Be able to handle light conversation too (e.g., greetings, 'How can I help?')."
+    "\n- Chat naturally, concise but not robotic."
+    "\n- Respond to greetings/farewells/thanks warmly, without product info."
+    "\n- Use retrieved context only for beauty product answers; say briefly if missing."
+    "\n- Detect products from free text (no need for exact ASINs)."
+    "\n- Recommend similar products with a plain-language reason."
+    "\n- Compare products clearly with bullet points."
+    "\n- Handle light conversation naturally."
     "\nRules:"
-    "\n- Always prefer using the provided tools (answer_product_question, recommend_products, compare_products) when relevant."
-    "\n- Never invent details that are not in the product context. If context is insufficient, acknowledge it and give a helpful fallback."
-    "\n- Never use your own knowledge or opinions of beauty products."
-    "\n- Give note/acknowledgment when context is insufficient."
-    "\n- Keep responses engaging and medium-length: clear, friendly, and useful without being wordy."
-    "\n- When recommending or comparing, add a touch of helpful reasoning (e.g., 'this one mentions waterproof in the description')."
-    "\n- Don't ask in the end something like ' If you have specific preferences like budget or features, let me know for more tailored suggestions!'"
+    "\n- Prefer using tools (answer_product_question, recommend_products, compare_products)."
+    "\n- Never invent details or use outside knowledge."
+    "\n- If context is insufficient, acknowledge it briefly."
+    "\n- Responses should be medium-length, clear, and friendly."
+    "\n- When recommending/comparing, explain reasoning simply."
+    "\n- Do not end with generic follow-ups like 'let me know your budget'."
 )
 
 def _is_greeting_or_casual(query: str) -> bool:
@@ -59,22 +58,10 @@ def _is_greeting_or_casual(query: str) -> bool:
     
     # Create a focused prompt for greeting detection
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a conversation classifier. Your task is to determine if a message is a greeting, casual acknowledgment, or requires product-related assistance.
-
-Classify as 'greeting' if the message is:
-- A greeting (hello, hi, good morning, etc.)
-- A farewell (bye, goodbye, see you later, etc.)
-- A thank you or acknowledgment (thanks, okay, great, etc.)
-- A casual social interaction (how are you, what's up, etc.)
-- A simple acknowledgment (ok, cool, nice, perfect, etc.)
-
-Classify as 'product_query' if the message:
-- Asks about any product, feature, or service
-- Contains questions that need information
-- Requests recommendations, comparisons, or explanations
-- Is anything other than a simple greeting or acknowledgment
-
-Respond with ONLY one word: either 'greeting' or 'product_query'."""),
+        ("system", 
+         "Classify the message as 'greeting' if it is a greeting, farewell, thanks, casual remark, "
+         "or simple acknowledgment. Otherwise classify as 'product_query'. "
+         "Respond with only 'greeting' or 'product_query'."),
         ("human", query)
     ])
     
@@ -92,17 +79,13 @@ def _get_greeting_response(query: str) -> str:
     llm = _llm()
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a friendly beauty product advisor. Generate a warm, natural response to the customer's greeting or casual message.
-
-Keep your response:
-- Brief and conversational (1-2 sentences max)
-- Focused on beauty products when offering help
-- Natural and friendly, not robotic
-- End with an offer to help with beauty products if appropriate
-
-Do not ask multiple questions or be overly enthusiastic."""),
-        ("human", query)
-    ])
+    ("system",
+     "If the message is a greeting, farewell, thanks, or casual remark, reply with a short, warm, natural response "
+     "like a helpful store consultant (1–2 sentences max). "
+     "Do not mention products unless the user asks. "
+     "If the message is not a greeting/casual remark, respond with exactly one word: 'product_query'."),
+    ("human", query)
+])
     
     try:
         result = llm.invoke(prompt.format_messages())
@@ -135,22 +118,15 @@ def _quick_intent_detection(query: str) -> Optional[str]:
     llm = _llm()
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are an intent classifier for a beauty product Q&A system. Analyze the user's message and classify it into one of these categories:
-
-1. 'recommend': User wants product recommendations, suggestions, or similar products
-   - Examples: "recommend a moisturizer", "suggest something for dry skin", "show me similar products", "find me alternatives"
-
-2. 'compare': User wants to compare products or understand differences
-   - Examples: "compare these two", "which is better", "what's the difference between", "product A vs product B"
-
-3. 'question': User has a specific question about products, features, or information
-   - Examples: "what ingredients are in this", "how does it work", "tell me about", "explain the benefits"
-
-4. 'uncertain': The intent is unclear or doesn't fit the above categories
-
-Respond with ONLY one word: 'recommend', 'compare', 'question', or 'uncertain'."""),
-        ("human", query)
-    ])
+    ("system", 
+     "Classify the user's message into exactly one of these intents:\n"
+     "- 'recommend' → asking for product suggestions or alternatives\n"
+     "- 'compare' → asking to compare or find differences\n"
+     "- 'question' → asking about product details or features\n"
+     "- 'uncertain' → unclear or none of the above\n\n"
+     "Respond with ONLY one word: recommend, compare, question, or uncertain."),
+    ("human", query)
+])
     
     try:
         result = llm.invoke(prompt.format_messages())
@@ -223,26 +199,18 @@ def run_agent(query: str, history: List[Dict[str, str]] = None) -> str:
             # No tool call; return model's direct answer
             return getattr(result, "content", "I couldn't process that request.")
 
-    # Polish tool output with FAQ guidance
+    # Polish tool output into a concise, user-friendly answer
     llm = _llm()
-    faq_snippets = get_faq_guidance(query, k=2)
-    faq_snippets = _clean_faq_snippets(faq_snippets)
-    
-    features_mode = any(w in query.lower() for w in ["feature", "features", "benefit", "benefits", "spec", "specs", "highlights"])
-    
-    final = llm.invoke([
-        SystemMessage(content=(
-            "You will rewrite a tool result into a concise, user-friendly answer without adding new information. "
-            "Respect these constraints strictly: do not invent facts, do not copy any 'Q:' or 'A:' labels, and do not start with a question. "
-            "When helpful, align tone/structure with these FAQ snippets (if any). If they conflict with the tool result, ignore them.\n\n"
-            f"FAQ style guidance:\n{faq_snippets}\n\n"
-            + ("If the user's request was for features/benefits/specs, present a short bullet list of key features extracted from the tool output, using the tool's wording where possible. " if features_mode else "")
-            + "If the tool output contains a line like 'Product: <Title> (ASIN: <ASIN>)', keep it as the first line and then provide the answer."
-        )),
-        HumanMessage(content=str(output)),
+
+    features_mode = any(w in query.lower() for w in [
+        "feature", "features", "benefit", "benefits", "spec", "specs", "highlights"
     ])
-    
-    return getattr(final, "content", str(output))
+
+    # final = str(output)
+
+    # printing without refining
+    return output
+
 
 # for testing
 if __name__ == "__main__":

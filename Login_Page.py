@@ -12,7 +12,6 @@ import streamlit.components.v1 as components
 
 # Optional extras (graceful fallback)
 try:
-    from streamlit_extras.stylable_container import stylable_container
     from streamlit_extras.let_it_rain import rain
     EXTRAS = True
 except Exception:
@@ -282,6 +281,15 @@ card_html = """
 """.format(error_html=error_html)
 
 st.markdown(card_html, unsafe_allow_html=True)
+
+if EXTRAS:
+    # Inject Material Symbols stylesheet for custom emoji/icon
+    rain(
+        emoji='💧',
+        font_size=8,
+        falling_speed=2.5,
+        animation_length=100
+    )
 
 # Preserve router query param on submit (no UI change)
 # No router param preservation needed; the router base is fixed

@@ -1,7 +1,7 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from typing import Tuple, List
-from cx_dashboard.logger import logger 
+from src.logger import logger 
 
 def load_data_from_csv(filepath: str) -> pd.DataFrame:
     """

@@ -7,12 +7,14 @@ Just for reference, here are the options:
 - chatgpt -> gpt-4o-mini
 - gemini -> gemini-2.5-pro
 - openrouter -> meta-llama/llama-3-70b-instruct; 
+- ollama -> llama3-groq-tool-use:latest
 """
 
 import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 
 try:
     import tomllib as tomli  # Python 3.11+
@@ -21,7 +23,9 @@ except Exception:  # pragma: no cover
 
 
 class LLMManager:
-    def __init__(self, base_model: str = "gemini", specific_model: str = "gemini-2.5-pro",
+    def __init__(self, 
+                 base_model: str = "openrouter", 
+                 specific_model: str = "meta-llama/llama-3-70b-instruct",
                  temperature: float = 0.2):
         """
         Initialize the LLM Manager.
@@ -70,6 +74,13 @@ class LLMManager:
                 openai_api_base="https://openrouter.ai/api/v1",
                 openai_api_key=api_key,
                 temperature=self.temperature,
+            )
+
+        elif self.base_model == "ollama":
+            model_name = self.specific_model or "llama3-groq-tool-use:latest"
+            return ChatOllama(
+                model=model_name,
+                temperature=self.temperature
             )
 
         else:

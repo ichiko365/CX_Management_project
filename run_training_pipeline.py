@@ -27,8 +27,8 @@ def main():
     
     # === STAGE 1: LOAD & TRANSFORM TRAINING DATA ===
     try:
-        train_set_path = os.path.join(from_root(),"cx_dashboard", "data", "train_set.csv")
-        train_df = pd.read_csv(train_set_path).head(5)
+        train_set_path = os.path.join(from_root(),"src", "data", "train_set.csv")
+        train_df = pd.read_csv(train_set_path).head(30)
         log.info(f"Loaded training set with {len(train_df)} reviews.")
     except FileNotFoundError:
         log.error(f"'{train_set_path}' not found. Please run data preparation pipeline first.")
@@ -59,7 +59,7 @@ def main():
     comparison_df = pd.merge(comparison_df, deepseek_df, left_on='id', right_on='deepseek_original_id', how='left')
 
     # Save the final comparison file
-    output_path = os.path.join(from_root(),"cx_dashboard", "data", "training_comparison_results.csv")
+    output_path = os.path.join(from_root(),"src", "data", "training_comparison_results.csv")
     comparison_df.to_csv(output_path, index=False)
     
     log.info(f"✅ Comparison results for the training set saved to '{output_path}'")

@@ -3,9 +3,22 @@ import sqlite3
 import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+import time
+import functools
 import uuid
 import os
 import sys
+
+def time_llm_response(func):
+    """Decorator to time LLM response generation"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        response_time = end_time - start_time
+        return result, response_time
+    return wrapper
 
 # Import your actual IntentRouter (adjust the import path as needed)
 try:
@@ -105,6 +118,9 @@ def init_session_state():
     
     if 'show_analytics' not in st.session_state:
         st.session_state.show_analytics = False
+    
+    if 'response_times' not in st.session_state:
+        st.session_state.response_times = []
 
 def display_conversation_history():
     """Display conversation history in the main chat area"""
@@ -255,6 +271,7 @@ def start_new_conversation():
         
         # Clear messages
         st.session_state.messages = []
+        st.session_state.response_times = []  # Clear response times for new conversation
         st.session_state.conversation_active = True
         
         st.success("Started new conversation!")
@@ -485,6 +502,7 @@ def main():
                 if st.session_state.router:
                     st.session_state.router.reset_conversation()
                 st.session_state.messages = []
+                st.session_state.response_times = []  # Clear response times
                 st.rerun()
         
         with col2:
@@ -544,6 +562,29 @@ def main():
                     st.metric("Session Q&A", current.get("total_qna", 0))
                 with col_d:
                     st.metric("Intent", current.get("current_intent", "None"))
+                
+                # Response time analytics
+                if st.session_state.response_times:
+                    st.subheader("⏱️ Response Time Analytics")
+                    col_rt1, col_rt2, col_rt3, col_rt4 = st.columns(4)
+                    
+                    avg_response_time = sum(st.session_state.response_times) / len(st.session_state.response_times)
+                    min_response_time = min(st.session_state.response_times)
+                    max_response_time = max(st.session_state.response_times)
+                    total_responses = len(st.session_state.response_times)
+                    
+                    with col_rt1:
+                        st.metric("Total Responses", total_responses)
+                    with col_rt2:
+                        st.metric("Avg Response Time", f"{avg_response_time:.2f}s")
+                    with col_rt3:
+                        st.metric("Fastest Response", f"{min_response_time:.2f}s")
+                    with col_rt4:
+                        st.metric("Slowest Response", f"{max_response_time:.2f}s")
+                    
+                    # Response time chart
+                    st.subheader("Response Time Trend")
+                    st.line_chart(st.session_state.response_times)
                 
                 # Historical stats
                 historical = analytics["historical_data"]
@@ -620,10 +661,20 @@ def main():
                 with st.spinner("Processing..."):
                     try:
                         # Use enhanced input for processing but keep original for display
-                        response = st.session_state.router.process_message(enhanced_input)
+                        @time_llm_response
+                        def get_timed_response():
+                            return st.session_state.router.process_message(enhanced_input)
+                        
+                        response, response_time = get_timed_response()
+                        
+                        # Store response time for analytics
+                        st.session_state.response_times.append(response_time)
+                        
+                        # Add response time to the assistant's message
+                        response_with_timing = f"{response}\n\n*⏱️ Response time: {response_time:.2f} seconds*"
                         
                         # Add assistant response to display
-                        st.session_state.messages.append({"role": "assistant", "content": response})
+                        st.session_state.messages.append({"role": "assistant", "content": response_with_timing})
                         
                         # Sync messages with router state to ensure consistency
                         if hasattr(st.session_state.router, 'state') and 'messages' in st.session_state.router.state:
@@ -701,8 +752,19 @@ def main():
                     
                     with st.spinner("Processing..."):
                         try:
-                            response = st.session_state.router.process_message(enhanced_query)
-                            st.session_state.messages.append({"role": "assistant", "content": response})
+                            @time_llm_response
+                            def get_timed_response():
+                                return st.session_state.router.process_message(enhanced_query)
+                            
+                            response, response_time = get_timed_response()
+                            
+                            # Store response time for analytics
+                            st.session_state.response_times.append(response_time)
+                            
+                            # Add response time to the assistant's message
+                            response_with_timing = f"{response}\n\n*⏱️ Response time: {response_time:.2f} seconds*"
+                            
+                            st.session_state.messages.append({"role": "assistant", "content": response_with_timing})
                             
                             # Keep messages in sync
                             if hasattr(st.session_state.router, 'state') and 'messages' in st.session_state.router.state:

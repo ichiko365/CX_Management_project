@@ -19,7 +19,6 @@ except Exception:  # pragma: no cover
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 # add ollama model
-from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from dotenv import load_dotenv
@@ -556,76 +555,6 @@ def compare_products(
     anchor_line = f"Product: {resolved[0][1]} (ASIN: {resolved[0][0]})\n" if resolved else ""
     return anchor_line + (out.content or "")
 
-def _is_greeting_or_casual(query: str) -> bool:
-    """Use LLM to detect if the query is a greeting or casual conversation that doesn't need tools."""
-    llm = _llm()
     
-    # Create a focused prompt for greeting detection
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a conversation classifier. Your task is to determine if a message is a greeting, casual acknowledgment, or requires product-related assistance.
-
-Classify as 'greeting' if the message is:
-- A greeting (hello, hi, good morning, etc.)
-- A farewell (bye, goodbye, see you later, etc.)
-- A thank you or acknowledgment (thanks, okay, great, etc.)
-- A casual social interaction (how are you, what's up, etc.)
-- A simple acknowledgment (ok, cool, nice, perfect, etc.)
-
-Classify as 'product_query' if the message:
-- Asks about any product, feature, or service
-- Contains questions that need information
-- Requests recommendations, comparisons, or explanations
-- Is anything other than a simple greeting or acknowledgment
-
-Respond with ONLY one word: either 'greeting' or 'product_query'."""),
-        ("human", query)
-    ])
-    
-    try:
-        result = llm.invoke(prompt.format_messages())
-        classification = result.content.strip().lower()
-        return classification == "greeting"
-    except Exception:
-        # Fallback to False to ensure product queries are handled
-        return False
-
-def _quick_intent_detection(query: str) -> Optional[str]:
-    """Use LLM to classify the query intent."""
-    # First check if it's a greeting/casual - these shouldn't trigger tools
-    if _is_greeting_or_casual(query):
-        return "greeting"
-    
-    # For product queries, use LLM to classify intent
-    llm = _llm()
-    
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are an intent classifier for a beauty product Q&A system. Analyze the user's message and classify it into one of these categories:
-
-1. 'recommend': User wants product recommendations, suggestions, or similar products
-   - Examples: "recommend a moisturizer", "suggest something for dry skin", "show me similar products", "find me alternatives"
-
-2. 'compare': User wants to compare products or understand differences
-   - Examples: "compare these two", "which is better", "what's the difference between", "product A vs product B"
-
-3. 'question': User has a specific question about products, features, or information
-   - Examples: "what ingredients are in this", "how does it work", "tell me about", "explain the benefits"
-
-4. 'uncertain': The intent is unclear or doesn't fit the above categories
-
-Respond with ONLY one word: 'recommend', 'compare', 'question', or 'uncertain'."""),
-        ("human", query)
-    ])
-    
-    try:
-        result = llm.invoke(prompt.format_messages())
-        intent = result.content.strip().lower()
-        
-        if intent in ["recommend", "compare", "question"]:
-            return intent
-        else:
-            return None  # Let the full agent handle uncertain cases
-    except Exception:
-        return None  # Fallback to full agent processing
-
 # Optional convenience: expose a small registry for external imports
 TOOLS = [answer_product_question, recommend_products, compare_products]

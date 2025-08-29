@@ -46,7 +46,7 @@ class LLMAnalysis:
                 # if not os.getenv("GOOGLE_API_KEY"):
                     # raise ValueError("GOOGLE_API_KEY not found in .env file.")
                 # model = ChatGoogleGenerativeAI(model=model_name, temperature=0) # Just for now, ruf
-                model = ChatOllama(model=model_name, reasoning=True)
+                model = ChatOllama(model=model_name)
             else:
                 raise ValueError(f"Unsupported provider: {provider}. Please choose 'ollama' or 'gemini'.")
 
