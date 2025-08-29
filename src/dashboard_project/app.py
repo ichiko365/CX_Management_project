@@ -1,3 +1,5 @@
+from math import e
+import os
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -5,13 +7,12 @@ from datetime import datetime
 from database.queries import fetch_table, fetch_count
 from processing.calculation import get_filter_options, apply_filters, KpiEngine
 from processing.team_task import (
-    get_complaints_data,
-    refresh_complaints_data,
-    process_urgent_feedback_queue,
-    get_team_performance_metrics,
-    get_urgent_queue_summary,
-    get_team_performance_data,
-    calculate_team_efficiency
+    get_support_data,
+    refresh_data,
+    calculate_performance_metrics,
+    fetch_team_performance_data,
+    calculate_team_efficiency,
+    calculate_time_ago
 )
 
 st.set_page_config(layout="wide")
@@ -49,30 +50,6 @@ st.markdown(
         """,
         unsafe_allow_html=True,
 )
-
-# Manual refresh to clear cached data and fetch fresh rows
-col1, col2, col3 = st.columns([2, 1, 2])
-with col2:
-    if st.button("🔄 Refresh Data", type="primary", help="Get the latest data from database", use_container_width=True):
-        # Clear function-specific caches (Streamlit 1.25+). Fallback to global clear if needed.
-        cleared_any = False
-        try:
-            fetch_table.clear()
-            cleared_any = True
-        except Exception:
-            pass
-        try:
-            fetch_count.clear()
-            cleared_any = True or cleared_any
-        except Exception:
-            pass
-        if not cleared_any:
-            try:
-                st.cache_data.clear()
-            except Exception:
-                pass
-        st.toast("✅ Data refreshed successfully!", icon="🔄")
-        st.rerun()
 
 # Load data once (cache-aware) and build filters
 df = fetch_table("analysis_results")
@@ -126,6 +103,30 @@ def _dashboard_page():
         <p style="margin: 0.3rem 0 0 0; opacity: 0.9; font-size: 0.9rem;">Monitor sentiment trends, track urgent issues, and discover key insights</p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # Manual refresh button - only on dashboard page
+    col1, col2, col3 = st.columns([2, 1, 2])
+    with col2:
+        if st.button("🔄 Refresh Data", type="primary", help="Get the latest data from database", use_container_width=True):
+            # Clear function-specific caches (Streamlit 1.25+). Fallback to global clear if needed.
+            cleared_any = False
+            try:
+                fetch_table.clear()
+                cleared_any = True
+            except Exception:
+                pass
+            try:
+                fetch_count.clear()
+                cleared_any = True or cleared_any
+            except Exception:
+                pass
+            if not cleared_any:
+                try:
+                    st.cache_data.clear()
+                except Exception:
+                    pass
+            st.toast("✅ Data refreshed successfully!", icon="🔄")
+            st.rerun()
     
     # Sidebar filters - only for Analytics Dashboard
     """📊 Smart Filters - Customize your view"""
@@ -418,7 +419,7 @@ def _dashboard_page():
     # Historical Sentiment Trend (left) and Region Map (right)
     st.markdown("---")
     st.markdown("### 📈 Data Insights & Trends")
-    st.caption("📊 Left: Customer urgency patterns • 🗺️ Right: Geographic distribution of reviews")
+    # st.caption("📊 Left: Customer urgency patterns • 🗺️ Right: Geographic distribution of reviews")
     trend_container = st.container()
     with trend_container:
         # Align trend data with the period selection when not using Review Date
@@ -435,6 +436,7 @@ def _dashboard_page():
 
     # --- Left: Urgency Score Distribution Bar Chart ---
         with left_col:
+            st.caption("📊 Left: Customer urgency patterns")
             if trend_source_df is not None and not trend_source_df.empty and "urgency_score" in trend_source_df.columns:
                 try:
                     import altair as alt  # lazy import
@@ -511,105 +513,71 @@ def _dashboard_page():
 
         # --- Right: India map for 5 cities with circle size by review count ---
         with right_col:
+            st.caption("🗺️ Right: Geographic distribution of reviews")
             df_map_src = trend_source_df if trend_source_df is not None else pd.DataFrame()
             if df_map_src is not None and not df_map_src.empty and "region" in df_map_src.columns:
-                try:
-                    # Use Folium (Leaflet) so tiles render without Mapbox token
-                    import folium
-                    from streamlit_folium import st_folium
+                # Use Folium (Leaflet) so tiles render without Mapbox token
+                import folium
+                from streamlit_folium import st_folium
 
-                    def _norm(r: str) -> str:
-                        return str(r).strip().lower()
+                def _norm(r: str) -> str:
+                    return str(r).strip().lower()
 
-                    # Canonical 5 cities and synonyms -> canonical key
-                    CANON = {
-                        "delhi": "delhi", "new delhi": "delhi",
-                        "mumbai": "mumbai", "bombay": "mumbai",
-                        "chennai": "chennai",
-                        "kolkata": "kolkata", "calcutta": "kolkata",
-                        "bengaluru": "bengaluru", "bangalore": "bengaluru",
-                    }
-                    CITY_COORDS = {
-                        "delhi": (28.6139, 77.2090),
-                        "mumbai": (19.0760, 72.8777),
-                        "chennai": (13.0827, 80.2707),
-                        "kolkata": (22.5726, 88.3639),
-                        "bengaluru": (12.9716, 77.5946),
-                    }
+                # Canonical 5 cities and synonyms -> canonical key
+                CANON = {
+                    "delhi": "delhi", "Delhi": "delhi",
+                    "mumbai": "mumbai", "Mumbai": "mumbai", "Bombay": "mumbai",
+                    "chennai": "chennai", "Chennai": "chennai",
+                    "kolkata": "kolkata", "Calcutta": "kolkata",
+                    "bangalore": "bengaluru",
+                }
+                CITY_COORDS = {
+                    "delhi": (28.6139, 77.2090),
+                    "mumbai": (19.0760, 72.8777),
+                    "chennai": (13.0827, 80.2707),
+                    "kolkata": (22.5726, 88.3639),
+                    "bengaluru": (12.9716, 77.5946),
+                }
 
-                    # Map all region values to the 5 canonical cities
-                    mapped = df_map_src["region"].astype(str).apply(_norm).map(CANON).dropna()
-                    if mapped.empty:
-                        st.info("🗺️ No supported cities found (Delhi, Mumbai, Chennai, Kolkata, Bengaluru)")
-                    else:
-                        counts = mapped.value_counts().rename_axis("city").reset_index(name="count")
-                        counts["lat"] = counts["city"].map(lambda c: CITY_COORDS[c][0])
-                        counts["lon"] = counts["city"].map(lambda c: CITY_COORDS[c][1])
+                # Map all region values to the 5 canonical cities
+                mapped = df_map_src["region"].astype(str).apply(_norm).map(CANON).dropna()
+                if mapped.empty:
+                    st.info("🗺️ No supported cities found (Delhi, Mumbai, Chennai, Kolkata, Bengaluru)")
+                else:
+                    counts = mapped.value_counts().rename_axis("city").reset_index(name="count")
+                    counts["lat"] = counts["city"].map(lambda c: CITY_COORDS[c][0])
+                    counts["lon"] = counts["city"].map(lambda c: CITY_COORDS[c][1])
 
-                        # Build map centered on India
-                        m = folium.Map(location=[22.9734, 78.6569], zoom_start=5, tiles="CartoDB Positron")
+                    # Build map centered on India
+                    m = folium.Map(location=[22.9734, 78.6569], zoom_start=3.8, tiles="CartoDB Positron")
 
-                        # Scale radius by count (pixels). Keep minimum visible size.
-                        max_c = max(int(counts["count"].max()), 1)
-                        def _radius(c):
-                            base = 8
-                            return base + int(22 * (c / max_c))
+                    # Scale radius by count (pixels). Keep minimum visible size.
+                    max_c = max(int(counts["count"].max()), 1)
 
-                        for _, row in counts.iterrows():
-                            folium.CircleMarker(
-                                location=(row["lat"], row["lon"]),
-                                radius=_radius(row["count"]),
-                                color="#6a00ff",
-                                weight=1,
-                                fill=True,
-                                fill_color="#d800b9",
-                                fill_opacity=0.6,
-                                tooltip=f"{row['city'].title()}: {int(row['count'])} reviews",
-                            ).add_to(m)
+                    def _radius(c):
+                        base = 8
+                        return base + int(22 * (c / max_c))
 
-                        st_folium(m, width=None, height=320)
-                except Exception:
-                    # Fallback to pydeck as a secondary option if folium isn't available
-                    try:
-                        import pydeck as pdk
-                        CANON = {
-                            "delhi": "delhi", "new delhi": "delhi",
-                            "mumbai": "mumbai", "bombay": "mumbai",
-                            "chennai": "chennai",
-                            "kolkata": "kolkata", "calcutta": "kolkata",
-                            "bengaluru": "bengaluru", "bangalore": "bengaluru",
-                        }
-                        CITY_COORDS = {
-                            "delhi": (28.6139, 77.2090),
-                            "mumbai": (19.0760, 72.8777),
-                            "chennai": (13.0827, 80.2707),
-                            "kolkata": (22.5726, 88.3639),
-                            "bengaluru": (12.9716, 77.5946),
-                        }
-                        mapped = df_map_src["region"].astype(str).str.lower().map(CANON).dropna()
-                        if mapped.empty:
-                            st.info("🗺️ No supported cities found (Delhi, Mumbai, Chennai, Kolkata, Bengaluru)")
-                        else:
-                            counts = mapped.value_counts().rename_axis("city").reset_index(name="count")
-                            counts["latitude"] = counts["city"].map(lambda c: CITY_COORDS[c][0])
-                            counts["longitude"] = counts["city"].map(lambda c: CITY_COORDS[c][1])
-                            counts["radius"] = counts["count"].apply(lambda c: 25000 + int(140000 * (c / max(int(counts['count'].max()), 1))))
+                    for _, row in counts.iterrows():
+                        folium.CircleMarker(
+                            location=(row["lat"], row["lon"]),
+                            radius=_radius(row["count"]),
+                            color="#6a00ff",
+                            weight=1,
+                            fill=True,
+                            fill_color="#d800b87a",
+                            fill_opacity=0.6,
+                            tooltip=f"{row['city'].title()}: {int(row['count'])} reviews",
+                        ).add_to(m)
+                        # Add a label with the count value at the center of the circle
+                        folium.map.Marker(
+                            [row["lat"], row["lon"]],
+                            icon=folium.DivIcon(
+                                html=f"""<div style="font-size: 16px; color: #222; font-weight: bold; text-align: center;">{int(row['count'])}</div>"""
+                            ),
+                        ).add_to(m)
 
-                            view_state = pdk.ViewState(latitude=22.9734, longitude=78.6569, zoom=4.2)
-                            layer = pdk.Layer(
-                                "ScatterplotLayer",
-                                data=counts,
-                                get_position="[longitude, latitude]",
-                                get_color=[106, 0, 255, 180],
-                                get_radius="radius",
-                                pickable=True,
-                            )
-                            deck = pdk.Deck(layers=[layer], initial_view_state=view_state, map_style=None)
-                            st.pydeck_chart(deck, use_container_width=True)
-                    except Exception:
-                        st.info("🗺️ Install map dependencies to view geographic insights")
-            else:
-                st.info("🗺️ No geographic data available for mapping")
+                    st_folium(m, width=None, height=320)
 
     # Beauty Sentiment Drivers (computed in calculation.py)
     st.markdown("---")
@@ -776,7 +744,50 @@ def _table_page():
         
         st.dataframe(table_df, hide_index=False, use_container_width=True)
     else:
-        st.info("� No data available in the database. Please check your data source.")
+        st.info("ℹ️ No data available in the database. Please check your data source.")
+
+
+try:
+    from database.queries import (
+        fetch_complaints_with_departments,
+    )
+    from database.connector import get_customer_db_connection
+except Exception:
+    # If imports fail because of path, try adjusting sys.path
+    import sys
+    sys.path.append(os.path.dirname(__file__))
+    from database.queries import (
+        sync_complaints_from_customer_db,
+    )
+    from database.connector import get_customer_db_connection
+
+def refresh_data() -> bool:
+    """
+    Refresh the data by syncing from customer database (following temp_dashboard.py pattern).
+    """
+    try:
+        # Use the same sync method as temp_dashboard.py
+        n = sync_complaints_from_customer_db("complaints")
+        
+        # Clear Streamlit caches to ensure fresh connections/data - like temp_dashboard.py
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+        if hasattr(st, 'cache_resource'):
+            try:
+                st.cache_resource.clear()
+            except Exception:
+                pass
+        
+        if n > 0:
+            st.success(f"Successfully refreshed data ({n} rows) from customer database")
+        else:
+            st.info("Refresh completed but no rows were processed")
+        return True
+    except Exception as e:
+        st.error(f"Failed to refresh data: {e}")
+        return False
 
 def _team_management_page():
     """Team Management page with customer support queue and team performance"""
@@ -905,58 +916,91 @@ def _team_management_page():
             st.info("No items in the queue.")
             return
         
-        # Table headers
-        col1, col2, col3, col4 = st.columns([2, 4, 2, 1])
-        with col1:
-            st.markdown("**Customer**")
-        with col2:
-            st.markdown("**Issue**")
-        with col3:
-            st.markdown("**Assigned To**")
-        with col4:
-            st.markdown("**Time**")
-        
-        st.markdown("---")
-        
-        # Display each issue
-        for idx, row in df.iterrows():
-            customer_name = row.get('Customer', 'Unknown')
-            time_info = row.get('Time', '')
-            full_issue = row.get('Issue', 'No summary available')
-            assigned_to = row.get('Assigned To', 'Unassigned')
+        # Filter and prepare display data directly from support data
+        try:
+            # Filter for open/unresolved issues
+            urgent_df = df[df['status'].str.lower().isin(['open', 'pending', 'new'])].copy()
             
+            if urgent_df.empty:
+                st.info("No urgent items in the queue.")
+                return
+            
+            # Sort by urgency if available, otherwise by created_at (newest first)
+            if 'urgency' in urgent_df.columns:
+                urgent_df = urgent_df.sort_values('urgency', ascending=False)
+            elif 'priority' in urgent_df.columns:
+                urgent_df = urgent_df.sort_values('priority', ascending=False)
+            elif 'created_at' in urgent_df.columns:
+                urgent_df = urgent_df.sort_values('created_at', ascending=False)
+            
+            # Limit to top 5
+            urgent_df = urgent_df.head(5)
+            
+            # Table headers
             col1, col2, col3, col4 = st.columns([2, 4, 2, 1])
-            
             with col1:
-                st.markdown(f"**{customer_name}**")
-            
+                st.markdown("**Customer**")
             with col2:
-                # Display truncated issue with tooltip for full text
-                if len(full_issue) > 80:
-                    truncated_issue = full_issue[:80] + "..."
-                    st.markdown(f"""
-                    <div class="tooltip-container">
-                        <span class="issue-preview">{truncated_issue}</span>
-                        <span class="tooltip-text">{full_issue}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"*{full_issue}*")
-            
+                st.markdown("**Issue**")
             with col3:
-                if assigned_to and assigned_to != 'Unassigned':
-                    st.markdown(f"**{assigned_to}**")
-                    dept_name = row.get('Department', 'No Department')
-                    if dept_name and dept_name != 'No Department':
-                        st.caption(dept_name)
-                else:
-                    st.markdown("*Unassigned*")
-            
+                st.markdown("**Assigned To**")
             with col4:
-                if time_info:
-                    st.caption(time_info)
+                st.markdown("**Time**")
             
-            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("---")
+            
+            # Display each issue
+            for idx, row in urgent_df.iterrows():
+                # Get customer name (adapt to different column names)
+                customer_name = row.get('user_name', row.get('customer_name', row.get('name', 'Unknown')))
+                
+                # Get issue description (adapt to different column names)
+                full_issue = row.get('summary', row.get('description', row.get('issue', 'No summary available')))
+                
+                # Get assigned team member
+                assigned_to = row.get('team_member_name', row.get('assigned_to', 'Unassigned'))
+                
+                # Get department
+                dept_name = row.get('department_name', 'No Department')
+                
+                # Get time
+                time_info = calculate_time_ago(str(row.get('created_at', ''))) if 'created_at' in row else ''
+                
+                col1, col2, col3, col4 = st.columns([2, 4, 2, 1])
+                
+                with col1:
+                    st.markdown(f"**{customer_name}**")
+                
+                with col2:
+                    # Display truncated issue with tooltip for full text
+                    if len(str(full_issue)) > 80:
+                        truncated_issue = str(full_issue)[:80] + "..."
+                        st.markdown(f"""
+                        <div class="tooltip-container">
+                            <span class="issue-preview">{truncated_issue}</span>
+                            <span class="tooltip-text">{full_issue}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"*{full_issue}*")
+                
+                with col3:
+                    if assigned_to and assigned_to != 'Unassigned':
+                        st.markdown(f"**{assigned_to}**")
+                        if dept_name and dept_name != 'No Department':
+                            st.caption(dept_name)
+                    else:
+                        st.markdown("*Unassigned*")
+                
+                with col4:
+                    if time_info:
+                        st.caption(time_info)
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+        except Exception as e:
+            st.error(f"Error displaying urgent queue: {e}")
+            st.info("No items in the queue.")
 
     def render_team_performance_card(team_df: pd.DataFrame):
         """Render the team performance card"""
@@ -986,8 +1030,8 @@ def _team_management_page():
         
         st.markdown("---")
         
-        # Display each team member
-        for idx, row in team_df.iterrows():
+        # Display each team member (limited to 5)
+        for idx, row in team_df.head(5).iterrows():
             col1, col2, col3 = st.columns([3, 2, 2])
             
             with col1:
@@ -1015,7 +1059,7 @@ def _team_management_page():
             
             st.markdown("<br>", unsafe_allow_html=True)
 
-    def render_metrics_cards(metrics: dict, urgent_summary: dict, team_performance_df: pd.DataFrame):
+    def render_metrics_cards(metrics: dict, team_performance_df: pd.DataFrame):
         """Render metrics cards"""
         col1, col2, col3, col4 = st.columns(4)
         
@@ -1023,9 +1067,9 @@ def _team_management_page():
             st.markdown("""
             <div class="metrics-card">
                 <div class="metric-value">{}</div>
-                <div class="metric-label">Total Complaints</div>
+                <div class="metric-label">Total Support Items</div>
             </div>
-            """.format(metrics.get('total_complaints', 0)), unsafe_allow_html=True)
+            """.format(metrics.get('total_items', 0)), unsafe_allow_html=True)
         
         with col2:
             st.markdown("""
@@ -1033,7 +1077,7 @@ def _team_management_page():
                 <div class="metric-value" style="color: #dc2626;">{}</div>
                 <div class="metric-label">Total Unresolved</div>
             </div>
-            """.format(metrics.get('unresolved_complaints', 0)), unsafe_allow_html=True)
+            """.format(metrics.get('unresolved_items', 0)), unsafe_allow_html=True)
         
         with col3:
             st.markdown("""
@@ -1055,29 +1099,42 @@ def _team_management_page():
     # Main Team Management Page Content
     st.markdown("### 🎧 Live Support Dashboard")
     
-    # Load and process data
-    with st.spinner("🔄 Loading customer support data..."):
-        complaints_df = get_complaints_data()
+    # Add refresh button at the top - following temp_dashboard.py pattern
+    col_refresh1, col_refresh2, col_refresh3 = st.columns([1, 2, 1])
+    with col_refresh2:
+        if st.button("🔄 Sync and Refresh", type="primary", use_container_width=True):
+            with st.spinner("🔄 Syncing and refreshing..."):
+                success = refresh_data()
+                if success:
+                    # Rerun to refresh UI with new data - like temp_dashboard.py
+                    try:
+                        st.rerun()
+                    except Exception:
+                        try:
+                            st.experimental_rerun()
+                        except Exception:
+                            pass
+
+    # Load and process data - following temp_dashboard.py pattern
+    with st.spinner("📊 Loading customer support data..."):
+        support_df = get_support_data()
     
-    if complaints_df.empty:
-        st.error("⚠️ No customer support data available")
-        st.info("💡 Please check database connection or refresh the data")
-        if st.button("🔄 Try Refreshing Data", type="primary"):
-            refresh_complaints_data()
-            st.rerun()
-        return
+    # Even if empty, continue with fallback data (temp_dashboard.py approach)
     
-    # Process urgent queue and get team performance data
-    urgent_queue_df = process_urgent_feedback_queue(complaints_df)
-    team_performance_df = get_team_performance_data()
+    # Process team performance data
+    try:
+        team_performance_df = fetch_team_performance_data()
+    except Exception as e:
+        st.error(f"Failed to load team performance data: {e}")
+        print(f"\n\n\n There is error \n\n\n")
+        team_performance_df = pd.DataFrame()
     
     # Get metrics
-    metrics = get_team_performance_metrics(complaints_df)
-    urgent_summary = get_urgent_queue_summary(urgent_queue_df)
+    metrics = calculate_performance_metrics(support_df)
     
     # Display metrics cards
     st.markdown("### 📊 Key Performance Metrics")
-    render_metrics_cards(metrics, urgent_summary, team_performance_df)
+    render_metrics_cards(metrics, team_performance_df)
     
     st.markdown("---")
     
@@ -1086,20 +1143,8 @@ def _team_management_page():
     col_main1, col_main2 = st.columns([1, 1])
     
     with col_main1:
-        if not urgent_queue_df.empty:
-            render_urgent_queue_card(urgent_queue_df)
-        else:
-            st.markdown("""
-            <div style="background-color: #f8fafc; padding: 1rem; border-radius: 0.5rem; border: 1px solid #e2e8f0; margin-bottom: 1rem;">
-                <h3 style="color: #dc2626; margin: 0; font-size: 1.25rem; font-weight: bold;">
-                    🔔 Issues Queue
-                </h3>
-                <p style="color: #6b7280; font-size: 0.9rem; margin: 0.25rem 0 0 0;">
-                    Customer complaints and support requests
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-            st.info("No items in the queue.")
+        # Pass the support data directly to render_urgent_queue_card
+        render_urgent_queue_card(support_df)
     
     with col_main2:
         render_team_performance_card(team_performance_df)
@@ -1122,7 +1167,7 @@ def _team_management_page():
         - Red rates (<60%) require immediate intervention
         
         **🔄 Best Practices:**
-        - Regular data refresh ensures real-time monitoring
+        - Monitor team efficiency and task completion rates
         - Hover over charts for detailed insights
         - Use filters to focus on specific time periods or regions
         """)

@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 from typing import Optional
 import re
-from psycopg2.extras import execute_values
+from sqlalchemy import text
 from database.connector import get_db_connection, get_customer_db_connection
 
 
@@ -17,16 +17,11 @@ def fetch_table(table_name: str = "analysis_results", database_name = "database"
     Returns:
         DataFrame of results (empty on error or if table has no rows).
     """
-    conn = None
+    engine = None
     try:
-        conn = get_db_connection(database_name)
-        if not conn:
+        engine = get_db_connection(database_name)
+        if not engine:
             st.warning("Database connection is not available.")
-            return pd.DataFrame()
-
-        # Test connection
-        if hasattr(conn, 'closed') and conn.closed:
-            st.warning(f"Database connection to '{database_name}' is closed.")
             return pd.DataFrame()
 
         # Note: table_name is interpolated safely by whitelisting characters.
@@ -34,7 +29,7 @@ def fetch_table(table_name: str = "analysis_results", database_name = "database"
             raise ValueError("Invalid table name.")
 
         query = f'SELECT * FROM "{table_name}";'
-        df = pd.read_sql(query, conn)
+        df = pd.read_sql(query, engine)
         # If an 'id' column exists, promote it to the index to avoid duplicate id + auto-index
         if "id" in df.columns:
             try:
@@ -47,30 +42,26 @@ def fetch_table(table_name: str = "analysis_results", database_name = "database"
         st.error(f"Error fetching data from '{table_name}': {e}")
         return pd.DataFrame()
     finally:
-        # Close connection since we're using reduced TTL
-        if conn:
-            try:
-                conn.close()
-            except:
-                pass
+        # SQLAlchemy engines handle connection pooling, no need to close
+        pass
 
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_count(table_name: str = "analysis_results", database_name = "database") -> Optional[int]:
     """Return COUNT(*) for the specified table, or None on error."""
-    conn = get_db_connection(database_name)
-    if not conn:
+    engine = get_db_connection(database_name)
+    if not engine:
         return None
     try:
         if not table_name.replace("_", "").isalnum():
             raise ValueError("Invalid table name.")
         q = f'SELECT COUNT(*) FROM "{table_name}";'
-        result = pd.read_sql(q, conn)
+        result = pd.read_sql(q, engine)
         return int(result.iloc[0, 0]) if not result.empty else 0
     except Exception:
         return None
     finally:
-        # Preserve cached connection for reuse.
+        # SQLAlchemy engines handle connection pooling, no need to close
         pass
 
 
@@ -102,8 +93,8 @@ def sync_complaints_from_customer_db(target_table_name: str = "complaints") -> i
     Returns:
         Number of rows processed
     """
-    src_conn = None
-    dst_conn = None
+    src_engine = None
+    dst_engine = None
     
     try:
         # Clear Streamlit cache for database connections to get fresh connections
@@ -111,14 +102,9 @@ def sync_complaints_from_customer_db(target_table_name: str = "complaints") -> i
             st.cache_resource.clear()
         
         # Connect to customer database to fetch data
-        src_conn = get_customer_db_connection()
-        if not src_conn:
+        src_engine = get_customer_db_connection()
+        if not src_engine:
             st.error("Unable to connect to customer_database")
-            return 0
-            
-        # Test connection
-        if hasattr(src_conn, 'closed') and src_conn.closed:
-            st.error("Customer database connection is closed")
             return 0
             
         # Execute the join query from complaints.py
@@ -142,77 +128,52 @@ def sync_complaints_from_customer_db(target_table_name: str = "complaints") -> i
             ORDER BY st.created_at DESC
         """
         
-        with src_conn.cursor() as cur:
-            cur.execute(query)
-            rows = cur.fetchall()
-            cols = [desc[0] for desc in cur.description]
+        # Use SQLAlchemy engine to fetch data
+        df = pd.read_sql(query, src_engine)
         
-        if not cols or not rows:
+        if df.empty:
             st.warning("No data found in customer database")
             return 0
             
         # Connect to main database
-        dst_conn = get_db_connection("database")
-        if not dst_conn:
+        dst_engine = get_db_connection("database")
+        if not dst_engine:
             st.error("Unable to connect to main database")
             return 0
             
-        # Test connection
-        if hasattr(dst_conn, 'closed') and dst_conn.closed:
-            st.error("Main database connection is closed")
-            return 0
-            
         # Sanitize column names
-        safe_cols = [_sanitize_identifier(c) for c in cols]
+        safe_cols = [_sanitize_identifier(c) for c in df.columns]
+        df.columns = safe_cols
         
-        with dst_conn.cursor() as cur:
+        # Use SQLAlchemy engine with proper connection handling
+        with dst_engine.connect() as conn:
             # Create table if it doesn't exist
             cols_ddl = ", ".join([f'"{c}" TEXT' for c in safe_cols])
-            cur.execute(f'''
+            conn.execute(text(f'''
                 CREATE TABLE IF NOT EXISTS "{target_table_name}" (
                     {cols_ddl},
                     UNIQUE(id)
                 )
-            ''')
+            '''))
             
             # Clear existing data and insert new data (replace strategy)
-            cur.execute(f'DELETE FROM "{target_table_name}"')
+            conn.execute(text(f'DELETE FROM "{target_table_name}"'))
+            conn.commit()
             
-            # Insert new data
-            if rows:
-                col_names_sql = ", ".join([f'"{c}"' for c in safe_cols])
-                insert_sql = f'INSERT INTO "{target_table_name}" ({col_names_sql}) VALUES %s'
-                
-                # Convert all row values to strings for TEXT columns
-                data = [tuple(None if v is None else str(v) for v in row) for row in rows]
-                execute_values(cur, insert_sql, data, page_size=500)
+            # Use pandas to_sql for easier data insertion
+            df.to_sql(target_table_name, conn, if_exists='append', index=False, method='multi')
+            conn.commit()
             
-            dst_conn.commit()
-            
-        st.success(f"Successfully synced {len(rows)} rows to '{target_table_name}' table")
-        return len(rows)
+        st.success(f"Successfully synced {len(df)} rows to '{target_table_name}' table")
+        return len(df)
         
     except Exception as e:
         st.error(f"Error syncing complaints data: {e}")
-        if dst_conn:
-            try:
-                dst_conn.rollback()
-            except:
-                pass
         return 0
         
     finally:
-        # Always close connections
-        if src_conn:
-            try:
-                src_conn.close()
-            except:
-                pass
-        if dst_conn:
-            try:
-                dst_conn.close()
-            except:
-                pass
+        # SQLAlchemy engines handle connection pooling, no need to manually close
+        pass
 
 
 def fetch_complaints_with_departments() -> pd.DataFrame:
@@ -227,8 +188,8 @@ def fetch_complaints_with_departments() -> pd.DataFrame:
     Returns:
         DataFrame with complaints and department data
     """
-    main_conn = None
-    customer_conn = None
+    main_engine = None
+    customer_engine = None
     
     try:
         # Clear Streamlit cache for database connections to get fresh connections
@@ -236,25 +197,15 @@ def fetch_complaints_with_departments() -> pd.DataFrame:
             st.cache_resource.clear()
             
         # First, get complaints data from main database
-        main_conn = get_db_connection("database")
-        if not main_conn:
+        main_engine = get_db_connection("database")
+        if not main_engine:
             st.warning("Unable to connect to main database")
             return pd.DataFrame()
             
-        # Test connection
-        if hasattr(main_conn, 'closed') and main_conn.closed:
-            st.warning("Main database connection is closed")
-            return pd.DataFrame()
-            
         # Get customer database connection for departments
-        customer_conn = get_customer_db_connection()
-        if not customer_conn:
+        customer_engine = get_customer_db_connection()
+        if not customer_engine:
             st.warning("Unable to connect to customer database")
-            return pd.DataFrame()
-            
-        # Test connection
-        if hasattr(customer_conn, 'closed') and customer_conn.closed:
-            st.warning("Customer database connection is closed")
             return pd.DataFrame()
             
         # Since we can't do cross-database joins directly in PostgreSQL,
@@ -262,11 +213,11 @@ def fetch_complaints_with_departments() -> pd.DataFrame:
         
         # Fetch complaints from main database
         complaints_query = 'SELECT * FROM "complaints"'
-        complaints_df = pd.read_sql(complaints_query, main_conn)
+        complaints_df = pd.read_sql(complaints_query, main_engine)
         
         # Fetch departments from customer database
         departments_query = 'SELECT id, name FROM "departments"'
-        departments_df = pd.read_sql(departments_query, customer_conn)
+        departments_df = pd.read_sql(departments_query, customer_engine)
         
         # Perform RIGHT JOIN in pandas (all departments, matching complaints where available)
         if not complaints_df.empty and not departments_df.empty:
@@ -305,15 +256,5 @@ def fetch_complaints_with_departments() -> pd.DataFrame:
         return pd.DataFrame()
         
     finally:
-        # Always close connections
-        if main_conn:
-            try:
-                main_conn.close()
-            except:
-                pass
-        if customer_conn:
-            try:
-                customer_conn.close()
-            except:
-                pass
-
+        # SQLAlchemy engines handle connection pooling, no need to manually close
+        pass

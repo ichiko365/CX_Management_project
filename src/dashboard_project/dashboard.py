@@ -20,52 +20,12 @@ except Exception:
         sync_complaints_from_customer_db,
     )
 
-ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
-URGENT_IMG = os.path.join(ASSETS_DIR, "urgent_queue.png")
-TEAM_IMG = os.path.join(ASSETS_DIR, "team_performance.png")
-
 st.set_page_config(page_title="Support Dashboard", layout="wide")
 
 st.title("Support Dashboard")
-st.markdown("A lightweight dashboard showing urgent feedback and team performance. Columns 'Priority' and 'Rating' are omitted.")
 
 # --- Top row: show images if available ---
 cols = st.columns([1, 1])
-def _is_valid_image(path: str) -> bool:
-    """Quick check for PNG/JPEG headers to avoid trying to load invalid files."""
-    try:
-        if not os.path.exists(path):
-            return False
-        with open(path, "rb") as f:
-            header = f.read(8)
-            if not header:
-                return False
-            # PNG signature or JPEG start bytes
-            if header.startswith(b"\x89PNG") or header.startswith(b"\xff\xd8\xff"):
-                return True
-        return False
-    except Exception:
-        return False
-
-
-with cols[0]:
-    if _is_valid_image(URGENT_IMG):
-        try:
-            st.image(URGENT_IMG, use_container_width=True)
-        except Exception:
-            st.info("Urgent queue image exists but could not be displayed.")
-    else:
-        st.info("Urgent queue image not found or invalid. Place a PNG/JPEG at: src/dashboard_project/assets/urgent_queue.png")
-
-with cols[1]:
-    if _is_valid_image(TEAM_IMG):
-        try:
-            st.image(TEAM_IMG, use_container_width=True)
-        except Exception:
-            st.info("Team performance image exists but could not be displayed.")
-    else:
-        st.info("Team performance image not found or invalid. Place a PNG/JPEG at: src/dashboard_project/assets/team_performance.png")
-
 st.markdown("---")
 
 # Control buttons

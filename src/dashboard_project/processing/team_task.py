@@ -1,9 +1,11 @@
+from arrow import get
 import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 import sys
 import os
+from sqlalchemy import text
 
 # Add the parent directory to sys.path to import from database module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,102 +20,53 @@ except ImportError:
     pytz = None
 
 
-def refresh_complaints_data() -> bool:
+def refresh_data() -> bool:
     """
-    Refresh the complaints table by syncing data from customer database.
-    Uses the main() function from complaints.py to properly sync data.
+    Refresh the data by syncing from customer database.
     
     Returns:
         bool: True if successful, False otherwise
     """
     try:
-        # Use the new queries sync function to refresh complaints into main DB
+        # Use the queries sync function to refresh data into main DB
         n = sync_complaints_from_customer_db("complaints")
         if n > 0:
-            st.success(f"Successfully refreshed complaints data ({n} rows) from customer database")
+            st.success(f"Successfully refreshed data ({n} rows) from customer database")
         else:
             st.info("Refresh completed but no rows were processed")
         return True
     except Exception as e:
-        st.error(f"Failed to refresh complaints data: {e}")
+        st.error(f"Failed to refresh data: {e}")
         return False
 
 
-def get_complaints_data() -> pd.DataFrame:
+def get_support_data() -> pd.DataFrame:
     """
-    Fetch complaints data from the database.
+    Fetch support/complaints data from the database.
     
     Returns:
-        pd.DataFrame: Complaints data
+        pd.DataFrame: Support data
     """
     try:
         df = fetch_table("complaints", "database")
         if df.empty:
-            st.warning("No complaints data found. Try refreshing the data.")
+            st.warning("No support data found. Try refreshing the data.")
         return df
     except Exception as e:
-        st.error(f"Error fetching complaints data: {e}")
+        st.error(f"Error fetching support data: {e}")
         return pd.DataFrame()
-
-
-def categorize_priority(status: str, created_at: str) -> str:
-    """
-    Categorize priority based on status and how old the complaint is.
     
-    Args:
-        status: Current status of the complaint
-        created_at: When the complaint was created
-        
-    Returns:
-        str: Priority level (Critical, High, Medium, Low)
-    """
-    try:
-        # Parse the created_at timestamp
-        if isinstance(created_at, str):
-            # Try different datetime formats
-            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S']:
-                try:
-                    created_time = datetime.strptime(created_at, fmt)
-                    break
-                except ValueError:
-                    continue
-            else:
-                # If all formats fail, assume it's recent
-                created_time = datetime.now() - timedelta(hours=1)
-        else:
-            created_time = created_at
-        
-        # Calculate age in hours
-        age_hours = (datetime.now() - created_time).total_seconds() / 3600
-        
-        # Priority logic
-        if status and status.lower() in ['urgent', 'critical', 'escalated']:
-            return 'Critical'
-        elif age_hours < 2:  # Less than 2 hours old
-            return 'Critical'
-        elif age_hours < 6:  # Less than 6 hours old
-            return 'High'
-        elif age_hours < 24:  # Less than 24 hours old
-            return 'Medium'
-        else:
-            return 'Low'
-            
-    except Exception:
-        return 'Medium'  # Default priority
 
-
-def get_time_ago(created_at: str) -> str:
+def calculate_time_ago(timestamp: str) -> str:
     """
     Convert timestamp to 'X hours ago' format.
-    
     Args:
-        created_at: Timestamp string (may include timezone)
-        
+        timestamp: Timestamp string (may include timezone)
     Returns:
         str: Human readable time difference
     """
     try:
-        if isinstance(created_at, str):
+        if isinstance(timestamp, str):
             # Try different datetime formats including timezone-aware formats
             formats_to_try = [
                 '%Y-%m-%d %H:%M:%S.%f%z',      # 2025-08-26 13:13:05.174474+05:30
@@ -126,11 +79,11 @@ def get_time_ago(created_at: str) -> str:
                 '%Y-%m-%dT%H:%M:%S'            # ISO format
             ]
             
-            created_time = None
+            parsed_time = None
             for fmt in formats_to_try:
                 try:
                     # Handle timezone colon format (e.g., +05:30 -> +0530)
-                    timestamp_str = created_at
+                    timestamp_str = timestamp
                     if '+' in timestamp_str and ':' in timestamp_str.split('+')[-1]:
                         # Convert +05:30 to +0530 for strptime compatibility
                         parts = timestamp_str.rsplit('+', 1)
@@ -144,29 +97,29 @@ def get_time_ago(created_at: str) -> str:
                             tz_part = timestamp_str[last_dash+1:].replace(':', '')
                             timestamp_str = timestamp_str[:last_dash] + '-' + tz_part
                     
-                    created_time = datetime.strptime(timestamp_str, fmt)
+                    parsed_time = datetime.strptime(timestamp_str, fmt)
                     break
                 except ValueError:
                     continue
             
-            if created_time is None:
+            if parsed_time is None:
                 return "Unknown"
         else:
-            created_time = created_at
+            parsed_time = timestamp
         
         # Convert timezone-aware datetime to UTC for comparison
-        if created_time.tzinfo is not None and pytz is not None:
+        if parsed_time.tzinfo is not None and pytz is not None:
             # Convert to UTC using pytz
-            created_time_utc = created_time.astimezone(pytz.UTC).replace(tzinfo=None)
+            parsed_time_utc = parsed_time.astimezone(pytz.UTC).replace(tzinfo=None)
             now_utc = datetime.now(pytz.UTC).replace(tzinfo=None)
-            diff = now_utc - created_time_utc
-        elif created_time.tzinfo is not None:
+            diff = now_utc - parsed_time_utc
+        elif parsed_time.tzinfo is not None:
             # Fallback: convert to naive datetime by removing timezone info
-            created_time_naive = created_time.replace(tzinfo=None)
-            diff = datetime.now() - created_time_naive
+            parsed_time_naive = parsed_time.replace(tzinfo=None)
+            diff = datetime.now() - parsed_time_naive
         else:
             # Assume local time if no timezone info
-            diff = datetime.now() - created_time
+            diff = datetime.now() - parsed_time
         
         total_seconds = int(diff.total_seconds())
         
@@ -185,70 +138,15 @@ def get_time_ago(created_at: str) -> str:
             
     except Exception as e:
         # For debugging, you can uncomment the line below to see what's wrong
-        # st.error(f"Time parsing error for '{created_at}': {e}")
+        # st.error(f"Time parsing error for '{timestamp}': {e}")
         return "Unknown"
 
 
-def process_urgent_feedback_queue(df: pd.DataFrame) -> pd.DataFrame:
+def calculate_performance_metrics(df: pd.DataFrame) -> dict:
     """
-    Process complaints data to create urgent feedback queue.
-    
+    Calculate performance metrics from support data.
     Args:
-        df: Raw complaints dataframe
-        
-    Returns:
-        pd.DataFrame: Processed urgent feedback queue
-    """
-    if df.empty:
-        return pd.DataFrame()
-    
-    try:
-        # Create a copy to avoid modifying original
-        processed_df = df.copy()
-        
-        # Add time_ago column
-        processed_df['time_ago'] = processed_df['created_at'].apply(get_time_ago)
-        
-        # Sort by creation time (newest first)
-        try:
-            processed_df['created_at_dt'] = pd.to_datetime(processed_df['created_at'], errors='coerce')
-            processed_df = processed_df.sort_values('created_at_dt', ascending=False)
-        except Exception:
-            # Fallback sorting if datetime conversion fails
-            pass
-        
-        # Select and rename columns for display (removed priority column)
-        display_columns = {
-            'user_name': 'Customer',
-            'summary': 'Issue', 
-            'team_member_name': 'Assigned To',
-            'department_name': 'Department',
-            'time_ago': 'Time'
-        }
-        
-        # Only keep columns that exist in the dataframe
-        available_columns = {k: v for k, v in display_columns.items() if k in processed_df.columns}
-        
-        if available_columns:
-            result_df = processed_df[list(available_columns.keys())].rename(columns=available_columns)
-        else:
-            # Fallback if expected columns don't exist
-            result_df = processed_df.copy()
-        
-        return result_df.head(20)  # Return top 20 items
-        
-    except Exception as e:
-        st.error(f"Error processing urgent feedback queue: {e}")
-        return pd.DataFrame()
-
-
-def get_team_performance_metrics(df: pd.DataFrame) -> Dict:
-    """
-    Calculate team performance metrics from complaints data.
-    
-    Args:
-        df: Complaints dataframe
-        
+        df: Support dataframe
     Returns:
         dict: Performance metrics
     """
@@ -258,44 +156,47 @@ def get_team_performance_metrics(df: pd.DataFrame) -> Dict:
     try:
         metrics = {}
         
-        # Total complaints
-        metrics['total_complaints'] = len(df)
+        # Total items
+        metrics['total_items'] = len(df)
         
-        # Total unresolved complaints (status not 'closed' or 'resolved')
+        # Status breakdown and unresolved count
         if 'status' in df.columns:
             status_counts = df['status'].value_counts().to_dict()
             metrics['status_breakdown'] = status_counts
-            # Count unresolved complaints
-            unresolved_statuses = ['open', 'pending', 'in_progress', 'new', 'escalated']
+            # Count unresolved items
+            unresolved_statuses = ['open']
             unresolved_count = sum([count for status, count in status_counts.items() 
                                   if status.lower() in unresolved_statuses or 
                                   (status.lower() not in ['closed', 'resolved', 'completed'])])
-            metrics['unresolved_complaints'] = unresolved_count
+            metrics['unresolved_items'] = unresolved_count
         else:
-            metrics['unresolved_complaints'] = 0
+            metrics['unresolved_items'] = 0
         
-        # Complaints by team member
+        # Items by team member
         if 'team_member_name' in df.columns:
             team_counts = df['team_member_name'].value_counts().to_dict()
             metrics['team_workload'] = team_counts
         
-        # Complaints by department and team efficiency calculation
+        # Items by department
         if 'department_name' in df.columns:
             dept_counts = df['department_name'].value_counts().to_dict()
             metrics['department_breakdown'] = dept_counts
-            
-            # Calculate team efficiency: % of departments that have active complaints
-            total_departments = len(dept_counts)  # Departments with complaints
-            # We'll need to get total departments from team_performance_data later
-            metrics['departments_with_complaints'] = total_departments
+            metrics['departments_with_items'] = len(dept_counts)
         
-        # Recent complaints (last 24 hours)
+        # Recent items (last 24 hours)
         if 'created_at' in df.columns:
             try:
-                df['created_at_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
-                recent_threshold = datetime.now() - timedelta(days=1)
-                recent_complaints = df[df['created_at_dt'] >= recent_threshold]
-                metrics['recent_24h'] = len(recent_complaints)
+                # Try to parse all timestamps robustly
+                def parse_dt(val):
+                    try:
+                        return pd.to_datetime(val, utc=True, errors='coerce')
+                    except Exception:
+                        return pd.NaT
+                df['created_at_dt'] = df['created_at'].apply(parse_dt)
+                now_utc = pd.Timestamp.utcnow()
+                recent_threshold = now_utc - pd.Timedelta(days=1)
+                recent_items = df[df['created_at_dt'] >= recent_threshold]
+                metrics['recent_24h'] = len(recent_items)
             except Exception:
                 metrics['recent_24h'] = 0
         else:
@@ -304,70 +205,12 @@ def get_team_performance_metrics(df: pd.DataFrame) -> Dict:
         return metrics
         
     except Exception as e:
-        st.error(f"Error calculating team metrics: {e}")
+        st.error(f"Error calculating performance metrics: {e}")
         return {}
 
-
-def calculate_team_efficiency(team_performance_df: pd.DataFrame) -> int:
-    """
-    Calculate team efficiency as percentage of departments working on complaints.
-    
-    Args:
-        team_performance_df: Team performance dataframe
-        
-    Returns:
-        int: Efficiency percentage
-    """
-    if team_performance_df.empty:
-        return 0
-    
-    try:
-        # Get unique departments
-        total_departments = len(team_performance_df['department_name'].unique())
-        
-        # Get departments that have team members with active complaints (total_tasks > 0)
-        active_departments = len(team_performance_df[team_performance_df['total_tasks'] > 0]['department_name'].unique())
-        
-        if total_departments > 0:
-            efficiency = round((active_departments / total_departments) * 100)
-            return efficiency
-        else:
-            return 0
-            
-    except Exception as e:
-        print(f"Error calculating team efficiency: {e}")
-        return 0
-
-
-def get_urgent_queue_summary(df: pd.DataFrame) -> Dict:
-    """
-    Get summary statistics for urgent queue.
-    
-    Args:
-        df: Processed urgent queue dataframe
-        
-    Returns:
-        dict: Summary statistics
-    """
-    if df.empty:
-        return {'total_items': 0}
-    
-    try:
-        summary = {
-            'total_items': len(df)
-        }
-        
-        return summary
-        
-    except Exception as e:
-        st.error(f"Error getting urgent queue summary: {e}")
-        return {'total_items': 0}
-
-
-def get_team_performance_data() -> pd.DataFrame:
+def fetch_team_performance_data() -> pd.DataFrame:
     """
     Get team performance data by joining team_members with support_tasks.
-    
     Returns:
         pd.DataFrame: Team performance data with task counts and department names
     """
@@ -404,12 +247,20 @@ def get_team_performance_data() -> pd.DataFrame:
         ORDER BY total_tasks DESC, completion_percentage DESC
         """
         
-        # Check if connection is still valid before using it
-        if conn.closed:
+        # Check if engine is still valid before using it
+        try:
+            with conn.connect() as test_conn:
+                if test_conn.closed:
+                    try:
+                        st.error("Database connection was closed unexpectedly")
+                    except:
+                        print("Database connection was closed unexpectedly")
+                    return pd.DataFrame()
+        except Exception:
             try:
-                st.error("Database connection was closed unexpectedly")
+                st.error("Database connection test failed")
             except:
-                print("Database connection was closed unexpectedly")
+                print("Database connection test failed")
             return pd.DataFrame()
         
         df = pd.read_sql(query, conn)
@@ -431,22 +282,48 @@ def get_team_performance_data() -> pd.DataFrame:
             print(error_msg)
         return pd.DataFrame()
     finally:
-        # Ensure connection is properly closed only if it exists and is not already closed
-        if conn and hasattr(conn, 'closed') and not conn.closed:
+        # Ensure engine is properly disposed
+        if conn:
             try:
-                conn.close()
+                conn.dispose()
             except Exception:
                 pass
 
-
-def toggle_oldest_task_status(team_member_id: int) -> bool:
+def calculate_team_efficiency(team_performance_df: pd.DataFrame) -> int:
     """
-    Toggle the status of the oldest open task for a team member.
-    Only works if the team member has tasks assigned (>0).
+    Calculate team efficiency as percentage of departments working on tasks.
+    Args:
+        team_performance_df: Team performance dataframe
+    Returns:
+        int: Efficiency percentage
+    """
+    if team_performance_df.empty:
+        return 0
+    try:
+        # Get unique departments
+        total_departments = len(team_performance_df['department_name'].unique())
+        
+        # Get departments that have team members with active tasks (total_tasks > 0)
+        active_departments = len(team_performance_df[team_performance_df['total_tasks'] > 0]['department_name'].unique())
+        
+        if total_departments > 0:
+            efficiency = round((active_departments / total_departments) * 100)
+            return efficiency
+        else:
+            return 0
+    except Exception as e:
+        print(f"Error calculating team efficiency: {e}")
+        return 0
+
+def toggle_task_status(team_member_id: int) -> bool:
+    """
+    Toggle the status of the oldest task for a team member.
+    - If the oldest open task exists → mark it closed.
+    - Else, if the oldest closed task exists → reopen it.
+    - Works only if the team member has tasks assigned (>0).
     
     Args:
         team_member_id: ID of the team member
-        
     Returns:
         bool: True if successful, False otherwise
     """
@@ -460,83 +337,90 @@ def toggle_oldest_task_status(team_member_id: int) -> bool:
                 print("Unable to connect to customer database")
             return False
         
-        # Check if connection is still valid
-        if conn.closed:
+        # Test connection validity
+        try:
+            with conn.connect() as test_conn:
+                if test_conn.closed:
+                    try:
+                        st.error("Database connection was closed unexpectedly")
+                    except:
+                        print("Database connection was closed unexpectedly")
+                    return False
+        except Exception:
             try:
-                st.error("Database connection was closed unexpectedly")
+                st.error("Database connection test failed")
             except:
-                print("Database connection was closed unexpectedly")
+                print("Database connection test failed")
             return False
         
-        with conn.cursor() as cur:
-            # First, check if this team member has any assigned tasks
-            cur.execute("""
+        # Use proper SQLAlchemy connection for operations
+        with conn.connect() as db_conn:
+            # Check if team member has any assigned tasks
+            result = db_conn.execute(text("""
                 SELECT COUNT(*) FROM support_tasks 
-                WHERE assigned_to_member_id = %s
-            """, (team_member_id,))
-            
-            total_tasks = cur.fetchone()[0]
-            
+                WHERE assigned_to_member_id = :member_id
+            """), {"member_id": team_member_id})
+            total_tasks = result.scalar()
+
             if total_tasks == 0:
                 try:
                     st.warning("This team member has no assigned tasks yet.")
                 except:
                     print("This team member has no assigned tasks yet.")
                 return False
-            
-            # Try to find the oldest open task
-            cur.execute("""
-                SELECT id, status FROM support_tasks 
-                WHERE assigned_to_member_id = %s AND status = 'open'
+
+            # Find oldest open task (lock to avoid race conditions)
+            result = db_conn.execute(text("""
+                SELECT id FROM support_tasks 
+                WHERE assigned_to_member_id = :member_id AND status = 'open'
                 ORDER BY created_at ASC 
                 LIMIT 1
-            """, (team_member_id,))
+                FOR UPDATE SKIP LOCKED
+            """), {"member_id": team_member_id})
             
-            task = cur.fetchone()
-            
+            task = result.fetchone()
             if task:
-                # Toggle open to closed
-                cur.execute("""
+                db_conn.execute(text("""
                     UPDATE support_tasks 
                     SET status = 'closed'
-                    WHERE id = %s
-                """, (task[0],))
-                conn.commit()  # Explicitly commit the transaction
+                    WHERE id = :task_id
+                """), {"task_id": task[0]})
+                db_conn.commit()
                 try:
                     st.success("Task marked as completed!")
                 except:
                     print("Task marked as completed!")
                 return True
+
+            # Otherwise try reopening the oldest closed task
+            result = db_conn.execute(text("""
+                SELECT id FROM support_tasks 
+                WHERE assigned_to_member_id = :member_id AND status = 'closed'
+                ORDER BY created_at ASC 
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            """), {"member_id": team_member_id})
+            
+            task = result.fetchone()
+            if task:
+                db_conn.execute(text("""
+                    UPDATE support_tasks 
+                    SET status = 'open'
+                    WHERE id = :task_id
+                """), {"task_id": task[0]})
+                db_conn.commit()
+                try:
+                    st.success("Task reopened!")
+                except:
+                    print("Task reopened!")
+                return True
             else:
-                # Try to find the oldest closed task to reopen
-                cur.execute("""
-                    SELECT id, status FROM support_tasks 
-                    WHERE assigned_to_member_id = %s AND status = 'closed'
-                    ORDER BY created_at ASC 
-                    LIMIT 1
-                """, (team_member_id,))
-                
-                task = cur.fetchone()
-                if task:
-                    # Toggle closed to open
-                    cur.execute("""
-                        UPDATE support_tasks 
-                        SET status = 'open'
-                        WHERE id = %s
-                    """, (task[0],))
-                    conn.commit()  # Explicitly commit the transaction
-                    try:
-                        st.success("Task reopened!")
-                    except:
-                        print("Task reopened!")
-                    return True
-                else:
-                    try:
-                        st.info("No tasks found to toggle.")
-                    except:
-                        print("No tasks found to toggle.")
-                    return False
-        
+                try:
+                    st.info("No tasks found to toggle.")
+                except:
+                    print("No tasks found to toggle.")
+                return False
+
     except Exception as e:
         error_msg = f"Error toggling task status: {e}"
         try:
@@ -545,9 +429,46 @@ def toggle_oldest_task_status(team_member_id: int) -> bool:
             print(error_msg)
         return False
     finally:
-        # Ensure connection is properly closed only if it exists and is not already closed
-        if conn and hasattr(conn, 'closed') and not conn.closed:
+        # Ensure engine is properly disposed
+        if conn:
             try:
-                conn.close()
-            except Exception:
-                pass
+                conn.dispose()
+            except Exception as e:
+                print(f"Warning: failed to dispose engine properly: {e}")
+
+
+if __name__ == "__main__":
+    result = calculate_team_efficiency(fetch_team_performance_data())
+    print("Here is the answer:")
+    print(result)
+
+
+    
+# Utility functions for backward compatibility
+def get_complaints_data() -> pd.DataFrame:
+    """Backward compatibility wrapper for get_support_data."""
+    return get_support_data()
+
+
+def refresh_complaints_data() -> bool:
+    """Backward compatibility wrapper for refresh_data."""
+    return refresh_data()
+
+
+def get_time_ago(created_at: str) -> str:
+    """Backward compatibility wrapper for calculate_time_ago."""
+    return calculate_time_ago(created_at)
+
+
+def get_team_performance_metrics(df: pd.DataFrame) -> Dict:
+    """Backward compatibility wrapper for calculate_performance_metrics."""
+    return calculate_performance_metrics(df)
+
+def get_team_performance_data() -> pd.DataFrame:
+    """Backward compatibility wrapper for fetch_team_performance_data."""
+    return fetch_team_performance_data()
+
+
+def toggle_oldest_task_status(team_member_id: int) -> bool:
+    """Backward compatibility wrapper for toggle_task_status."""
+    return toggle_task_status(team_member_id)

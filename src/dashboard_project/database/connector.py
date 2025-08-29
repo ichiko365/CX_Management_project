@@ -1,5 +1,5 @@
 import streamlit as st
-import psycopg2
+from sqlalchemy import create_engine, text
 from typing import Optional, Dict, Any
 from pathlib import Path
 import sys
@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover
 @st.cache_resource(show_spinner=False)
 def get_db_connection(db_key: str = "database"):
     """
-    Establish and cache a PostgreSQL connection using Streamlit secrets.
+    Establish and cache a PostgreSQL SQLAlchemy engine using Streamlit secrets.
 
     Parameters:
         db_key: Which DB name to use from secrets. For [connections.postgresql],
@@ -26,12 +26,8 @@ def get_db_connection(db_key: str = "database"):
                 For legacy [database] section, "database" uses 'name', while
                 "customer_database" will try 'customer_database' or 'customer_name'.
 
-    Secrets supported:
-      1) [connections.postgresql] with keys: user, password, host, port, database, customer_database
-      2) [database] with keys: user, password, host, port, name (and optionally customer_database/customer_name)
-
     Returns:
-        psycopg2 connection or None if connection fails.
+        SQLAlchemy Engine (safe for pandas.read_sql).
     """
     conn_params: Optional[Dict[str, Any]] = None
 
@@ -104,15 +100,18 @@ def get_db_connection(db_key: str = "database"):
             st.error(f"Database name for key '{db_key}' not found in secrets.")
             return None
 
-        # Attempt connection
-        conn = psycopg2.connect(**conn_params)
+        # Build SQLAlchemy engine
+        engine_url = (
+            f"postgresql+psycopg2://{conn_params['user']}:{conn_params['password']}"
+            f"@{conn_params['host']}:{conn_params['port']}/{conn_params['dbname']}"
+        )
+        engine = create_engine(engine_url)
 
-        # Quick health check to fail fast on bad credentials
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1;")
-            cur.fetchone()
+        # Quick health check
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
 
-        return conn
+        return engine
 
     except Exception as e:
         _print_err(f"Error connecting to PostgreSQL ({db_key}): {e}")
@@ -131,14 +130,9 @@ if __name__ == "__main__":
         if conn:
             st.success(f"Connected to '{key}' successfully!")
             try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT current_database();")
-                    dbn = cur.fetchone()[0]
+                with conn.connect() as cur:
+                    dbn = cur.execute(text("SELECT current_database();")).scalar()
                 st.write(f"current_database() = {dbn}")
-            except Exception:
-                pass
-            try:
-                conn.close()
             except Exception:
                 pass
         else:
