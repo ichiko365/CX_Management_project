@@ -17,6 +17,12 @@ from processing.team_task import (
 
 st.set_page_config(layout="wide")
 
+
+# Always import sync_complaints_from_customer_db for refresh_data
+try:
+    from database.queries import sync_complaints_from_customer_db
+except ImportError:
+    sync_complaints_from_customer_db = None
 # THEME: Set colors for background and title gradient — change these to adjust look
 bg_start = "#e5fbff"   #  (background)
 bg_end = "#fdfde9"     # (background)
@@ -756,9 +762,6 @@ except Exception:
     # If imports fail because of path, try adjusting sys.path
     import sys
     sys.path.append(os.path.dirname(__file__))
-    from database.queries import (
-        sync_complaints_from_customer_db,
-    )
     from database.connector import get_customer_db_connection
 
 def refresh_data() -> bool:
@@ -849,7 +852,7 @@ def _team_management_page():
         display: inline-block;
         cursor: pointer;
     }
-    
+
     .tooltip-text {
         visibility: hidden;
         width: 300px;
