@@ -1,5 +1,4 @@
 from typing import List, Dict, Any, Optional
-from langchain_openai import ChatOpenAI
 from complaint_agent.complaint_handler import ComplaintHandler  # Adjust import path as needed
 from chatbot.schema import UserIntent  # Adjust import path as needed
 from agent import run_agent
@@ -8,11 +7,17 @@ import json
 from datetime import datetime
 import os
 
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+from model import LLMManager
+
+
 class IntentRouter:
     """Main router class that manages intent classification and routing with SQLite persistence."""
     
     def __init__(self, db_path: str = "streamlit_conversation_memory.db", thread_id: str = "user_session"):
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        self.llm = LLMManager().get_client()
         self.router_llm = self.llm.with_structured_output(UserIntent)
         
         # SQLite setup for persistence

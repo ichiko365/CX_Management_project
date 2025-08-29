@@ -24,6 +24,11 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from dotenv import load_dotenv
 
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from model import LLMManager
+
 load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -242,8 +247,8 @@ def get_faq_guidance(question: str, k: int = 3) -> str:
 
 def _llm() -> ChatOpenAI:
     # Do not change user's model: allow override via env, fallback is safe
-    model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
-    return ChatOpenAI(model=model, temperature=0.2)
+    model = LLMManager().get_client()
+    return model
 
 def _resolve_product(query: str) -> Tuple[Optional[str], Optional[str], float]:
     """Resolve a product mention to (ASIN, Title, score) using the catalog index.
@@ -422,14 +427,16 @@ def recommend_products(
     header = f"Here are {len(items)} products related to '{query}':"
 
     sys = (
-        "You are recommending products. "
-        "- Start with 'Here are some products related to your request.'"
-        "- First, detect the category from query (mascara, eyeliner, etc.). "
-        "- Only recommend products in the SAME category. "
-        "- If budget, finish, or filters are mentioned but missing in data, explain that limitation clearly. "
-        "- Do not recommend products outside the retrieved set."
-        "- In the end, provide why are you giving this recommendation."
+    "You are recommending products. "
+    "- Start with 'Here are some products related to your request.' "
+    "- First, detect the category from query (mascara, eyeliner, etc.). "
+    "- Only recommend products in the SAME category. "
+    "- When showing each product, use the format: 'Product Name (ASIN: XXXXXXXX)'. "
+    "- If budget, finish, or filters are mentioned but missing in data, explain that limitation clearly. "
+    "- Do not recommend products outside the retrieved set. "
+    "- In the end, provide why you are giving this recommendation."
     )
+
 
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -524,12 +531,16 @@ def compare_products(
 
     # Build dynamic prompt for N products
     sys = (
-        "You are comparing two or more products. "
-        "- First resolve which products the user means (match title/ASIN). "
-        "- Only compare products from the same category. "
-        "- If a requested product cannot be found, ask user to clarify. "
-        "- Do not add unrelated products. "
+    "You are comparing two or more products. "
+    "- First resolve which products the user means (match title/ASIN). "
+    "- Only compare products from the same category. "
+    "- When showing each product, use the format: 'Product Name (ASIN: XXXXXXXX)'. "
+    "- If a requested product cannot be found, ask the user to clarify. "
+    "- Do not add unrelated products. "
+    "- Provide the comparison in a clear, structured way (e.g., bullet points or table style). "
+    "- In the end, summarize which product may be better suited based on the available details."
     )
+
 
     human_lines = []
     for idx, (asin, title, ctx) in enumerate(contexts, start=1):

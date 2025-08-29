@@ -3,11 +3,13 @@ from typing import Literal
 from langgraph.types import Command
 from .tools import log_complaint_to_db
 from .schema import State   
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from .schema import DepartmentClassification
 
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from model import LLMManager
 
 
 def ask_details(state: State) -> Command[Literal["summarize_complaint", "__end__"]]:
@@ -50,14 +52,7 @@ def summarize_complaint(state: State) -> Command[Literal["classify_department", 
     # Generate a summary of the complaint
     summary_prompt = f"Summarize the following customer complaint in 1-2 sentences. Be concise but accurate:\n\n{state['complaint_details']}"
     # Initialize the chat model
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    # llm = ChatOpenAI(
-    #     model="meta-llama/llama-3-70b-instruct",
-    #     openai_api_base="https://openrouter.ai/api/v1",
-    #     openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-    #     temperature=0.2,
-    #     max_tokens=1024
-    # )
+    llm = LLMManager().get_client()
 
     # Create a classifier for department classification
     classifier_llm = llm.with_structured_output(DepartmentClassification)
@@ -100,14 +95,7 @@ def classify_department(state: State) -> Command[Literal["log_complaint", "__end
 
 Complaint: {state['complaint_details']}"""
             # Initialize the chat model
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    #         llm = ChatOpenAI(
-    #     model="meta-llama/llama-3-70b-instruct",
-    #     openai_api_base="https://openrouter.ai/api/v1",
-    #     openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-    #     temperature=0.2,
-    #     max_tokens=1024
-    # )
+            llm = LLMManager().get_client()
 
             # Create a classifier for department classification
             classifier_llm = llm.with_structured_output(DepartmentClassification)

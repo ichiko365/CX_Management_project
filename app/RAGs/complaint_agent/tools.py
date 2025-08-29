@@ -4,8 +4,12 @@ import logging as log
 from urllib.parse import quote_plus
 from sqlalchemy import create_engine, text
 # Generate a summary (using your existing summarization approach)
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
+
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+from model import LLMManager
 
 # Basic logging setup
 log.basicConfig(level=log.INFO)
@@ -175,16 +179,7 @@ def log_complaint_to_db(order_id: str, department: str, complaint_details: str) 
     Log a complaint to the database.
     Compatible with your existing agent's expected return type.
     """
-    
-    
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    # llm = ChatOpenAI(
-    #     model="meta-llama/llama-3-70b-instruct",
-    #     openai_api_base="https://openrouter.ai/api/v1",
-    #     openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-    #     temperature=0.2,
-    #     max_tokens=1024
-    # )
+    llm = LLMManager().get_client()
     summary_prompt = f"Summarize this complaint in 1-2 sentences: {complaint_details}"
     response = llm.invoke([HumanMessage(content=summary_prompt)])
     complaint_summary = response.content
@@ -192,4 +187,3 @@ def log_complaint_to_db(order_id: str, department: str, complaint_details: str) 
     # Log to database
     result = log_complaint_to_db_full(order_id, department, complaint_details, complaint_summary)
     return result["success"]
-

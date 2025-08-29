@@ -4,15 +4,14 @@ import os
 import asyncio
 from typing import List, Dict, Optional
 from langchain_openai import ChatOpenAI
-from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
-
 try:
     import tomllib as tomli  # Python 3.11+
 except Exception:
     tomli = None
+
 
 # Robust import for both package and script execution
 try:
@@ -25,44 +24,14 @@ except Exception:
         sys.path.append(str(pathlib.Path(__file__).resolve().parent))
         from qa_chain import TOOLS, answer_product_question, recommend_products, compare_products, get_faq_guidance
 
-def _ensure_openrouter_api_key() -> None:
-    """Ensure OPENROUTER_API_KEY is available via env, .env, or Streamlit secrets."""
-    if os.getenv("OPENROUTER_API_KEY"):
-        return
-    # Try default .env resolution
-    load_dotenv()
-    if os.getenv("OPENROUTER_API_KEY"):
-        return
-    # Try specific .env locations relative to app folder
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-    for p in [
-        os.path.join(base_dir, ".env"),
-        os.path.join(os.path.dirname(base_dir), ".env"),
-        os.path.join(os.getcwd(), ".env"),
-    ]:
-        try:
-            if os.path.exists(p):
-                load_dotenv(p)
-        except Exception:
-            pass
-        if os.getenv("OPENROUTER_API_KEY"):
-            return
-    # Try Streamlit secrets
-    secrets_path = os.path.join(base_dir, ".streamlit", "secrets.toml")
-    if not os.getenv("OPENROUTER_API_KEY") and os.path.exists(secrets_path) and tomli is not None:
-        try:
-            with open(secrets_path, "rb") as f:
-                data = tomli.load(f)
-            key = data.get("OPENROUTER_API_KEY")
-            if key:
-                os.environ["OPENROUTER_API_KEY"] = key
-        except Exception:
-            pass
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from model import LLMManager
 
 def _llm() -> ChatOpenAI:
-    _ensure_openrouter_api_key()
-    model = os.getenv("OPENAI_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
-    return ChatOpenAI(model=model, temperature=0.2)
+    model = LLMManager().get_client()
+    return model
 
 AGENT_SYSTEM_PROMPT = (
     "You are a friendly and knowledgeable beauty advisor AI, here to help customers with product Q&A."

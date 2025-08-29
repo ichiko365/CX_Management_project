@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 class UserIntent(BaseModel):
     """The user's current intent in the conversation"""
-    intent: Literal["complaint", "qna"]
+    intent: Literal["complaint", "qna", "reset", "exit"]
 
 class RouterState(TypedDict):
     """Router state for managing conversation flow."""
