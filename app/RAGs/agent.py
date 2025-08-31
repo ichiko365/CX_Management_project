@@ -199,15 +199,6 @@ def run_agent(query: str, history: List[Dict[str, str]] = None) -> str:
             # No tool call; return model's direct answer
             return getattr(result, "content", "I couldn't process that request.")
 
-    # Polish tool output into a concise, user-friendly answer
-    llm = _llm()
-
-    features_mode = any(w in query.lower() for w in [
-        "feature", "features", "benefit", "benefits", "spec", "specs", "highlights"
-    ])
-
-    # final = str(output)
-
     # printing without refining
     return output
 

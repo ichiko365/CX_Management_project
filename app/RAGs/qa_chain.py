@@ -531,7 +531,8 @@ def compare_products(
     # Build dynamic prompt for N products
     sys = (
     "You are comparing two or more products. "
-    "- First resolve which products the user means (match title/ASIN). "
+    "- First resolve which products the user means (match title/ASIN)."
+    "- Start, output with 'Product Comparison:'."
     "- Only compare products from the same category. "
     "- When showing each product, use the format: 'Product Name (ASIN: XXXXXXXX)'. "
     "- If a requested product cannot be found, ask the user to clarify. "
