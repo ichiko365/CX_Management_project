@@ -24,9 +24,10 @@ except Exception:  # pragma: no cover
 
 class LLMManager:
     def __init__(self, 
-                 base_model: str = "ollama", 
-                 specific_model: str = "llama3-groq-tool-use:latest",
-                 temperature: float = 0.2):
+                 base_model: str = "openrouter", 
+                 specific_model: str = "meta-llama/llama-3-70b-instruct",
+                 temperature: float = None
+                 ):
         """
         Initialize the LLM Manager.
         :param base_model: one of ["chatgpt", "gemini", "openrouter"]

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import os
-import asyncio
 from functools import lru_cache
-import hashlib
 import re
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -86,7 +84,7 @@ def _embeddings():
     return HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",  # Faster, smaller model
         # model_name="Qwen/Qwen3-Embedding-0.6B",
-        model_kwargs={"device": "mps"},  # Use CPU for stability
+        model_kwargs={"device": "cpu"},  # Use CPU for stability
         encode_kwargs={"batch_size": 1, "normalize_embeddings": True},  # Reduced batch size for speed
     )
 
@@ -319,6 +317,7 @@ def answer_product_question(question: str) -> str:
 
     sys = (
         "You are answering a product-specific question. "
+        "Present the results in a Markdown format nature, like h3 as heading, description as content, end with something like, if you want to know more.."
         "- Use ONLY the product's ASIN, title, and description provided in context. "
         "- If the question asks about information not present (e.g., ingredients, price, cruelty-free, shades), reply: "
         "This information is not available from the product description I have."
@@ -370,44 +369,61 @@ def recommend_products(
     n: Optional[int] = None,
 ) -> str:
     """Recommend N similar products for a given user query or product mention. Detects N from the query if present."""
-    
-    asin, title, score = _resolve_product(query)
-    catalog = _catalog_db()
+
+    qa = _qa_db()
 
     # Detect N from query if not provided
     n_val = _parse_number_from_text(query, default=3) if n is None else n
     n_val = max(1, min(10, int(n_val)))
 
-    # Use title if it's a good match, otherwise use the original query
-    anchor_text = title if title and score < 1.0 else query
     # Fetch more results to ensure we have options after filtering
     k_fetch = max(n_val + 3, 8)
-    results = catalog.similarity_search_with_score(anchor_text, k=k_fetch)
+    results = qa.similarity_search_with_score(query, k=k_fetch)
 
     items = []
-    seen = set([asin]) if asin else set()
-    
+    seen = set()
+
     for doc, score in results:
-        cand_asin = (doc.metadata or {}).get("ASIN")
-        cand_title = (doc.metadata or {}).get("Title")
+        meta = doc.metadata or {}
+        cand_asin = meta.get("ASIN")
+        cand_title = meta.get("Title")
+        cand_brand = meta.get("Brand")
+        cand_desc = meta.get("Description")
+        cand_cat = meta.get("Category")
+
         if not cand_asin or cand_asin in seen:
             continue
         seen.add(cand_asin)
-        items.append((cand_title or "Unknown", cand_asin, score))
+
+        # Build a richer entry with details
+        detail = f"{cand_title or 'Unknown'}"
+        if cand_brand:
+            detail += f" | Brand: {cand_brand}"
+        if cand_cat:
+            detail += f" | Category: {cand_cat}"
+        if cand_desc:
+            detail += f" | Features: {cand_desc[:180]}..."  # keep short
+        items.append((detail, cand_asin, score))
+
         if len(items) >= n_val:
             break
 
     # If no items found, try a broader search
     if not items:
-        # Try broader search with common beauty terms
         fallback_terms = ["beauty product", "makeup", "skincare", "cosmetics"]
         for term in fallback_terms:
-            fallback_results = catalog.similarity_search_with_score(term, k=n_val)
+            fallback_results = qa.similarity_search_with_score(term, k=n_val)
             for doc, score in fallback_results:
-                cand_asin = (doc.metadata or {}).get("ASIN")
-                cand_title = (doc.metadata or {}).get("Title")
+                meta = doc.metadata or {}
+                cand_asin = meta.get("ASIN")
+                cand_title = meta.get("Title")
+                cand_brand = meta.get("Brand")
+
                 if cand_asin and cand_asin not in seen:
-                    items.append((cand_title or "Beauty Product", cand_asin, score))
+                    detail = f"{cand_title or 'Beauty Product'}"
+                    if cand_brand:
+                        detail += f" | Brand: {cand_brand}"
+                    items.append((detail, cand_asin, score))
                     seen.add(cand_asin)
                 if len(items) >= n_val:
                     break
@@ -419,7 +435,7 @@ def recommend_products(
             f"I couldn't find specific products matching '{query}'. "
             "This might be because the product database needs to be populated or "
             "the search terms don't match available products. "
-            "Try asking for more general categories like 'lipstick', 'moisturizer', or 'mascara'."
+            "Try asking for more general categories like 'cream', 'lotion', or 'serum'."
         )
 
     bullets = [f"- {t} (ASIN: {a})" for t, a, _ in items]
@@ -428,14 +444,14 @@ def recommend_products(
     sys = (
     "You are recommending products. "
     "- Start with 'Here are some products related to your request.' "
-    "- First, detect the category from query (mascara, eyeliner, etc.). "
+    "- First, detect the category from the query (cream, lotion, etc.). "
     "- Only recommend products in the SAME category. "
-    "- When showing each product, use the format: 'Product Name (ASIN: XXXXXXXX)'. "
-    "- If budget, finish, or filters are mentioned but missing in data, explain that limitation clearly. "
+    "- Present the results in a Markdown table with the columns: Name, Category, and ASIN. "
+    "Then Give a brief summary of each product's key features and benefits. With Markdown formatting, use headings for product names and bullet points for features."
     "- Do not recommend products outside the retrieved set. "
-    "- In the end, provide why you are giving this recommendation."
-    )
-
+    "- End with a justification of why these products were chosen, "
+    "based on how they match the user’s query."
+)
 
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -443,20 +459,17 @@ def recommend_products(
             ("human", "{bullets}\n\nBased on the above, answer the user's query: {query}"),
         ]
     )
-    
+
     try:
         llm = _llm()
-        # Build payload for the template
         payload = {
             "query": query,
             "bullets": "\n".join([header] + bullets),
         }
         messages = prompt.format_messages(**payload)
         out = llm.invoke(messages)
-        anchor_line = f"Product: {title or 'Unknown'} (ASIN: {asin or 'N/A'})\n" if (title or asin) else ""
-        return anchor_line + (out.content or "")
+        return out.content or ""
     except Exception:
-        # Fallback to simple bullet list if LLM fails
         return "\n".join([header] + bullets)
 
 @tool("compare_products", return_direct=False)
@@ -467,95 +480,105 @@ def compare_products(
     n: Optional[int] = None,
 ) -> str:
     """Compare N products detected from query or provided explicitly. Inputs: query (string), optional product_a/product_b, optional n (default 2 inferred from query). Returns bullet points grouped by each product."""
-    # Determine desired number of items
+
     target_n = _parse_number_from_text(query, default=2) if n is None else int(n)
     target_n = max(2, min(6, target_n))
 
-    catalog = _catalog_db()
+    qa = _qa_db()
 
     # Collect candidate product mentions
     candidates: List[str] = []
-    for s in [product_a, product_b]:
+    for s in (product_a, product_b):
         if s and s.strip():
             candidates.append(s.strip())
 
     if query:
-        # Split by common comparators to extract mentions
         parts = re.split(r"\b(?:vs|versus|,| and | & )\b", query, flags=re.I)
         for p in parts:
             p = re.sub(r"\b(compare|between|among|products?)\b", " ", p, flags=re.I).strip()
             if p:
                 candidates.append(p)
 
-    # Resolve to unique ASINs
-    resolved = []  # list of (asin, title)
-    seen_asin = set()
-    for cand in candidates:
-        asin, title, _ = _resolve_product(cand)
-        if asin and asin not in seen_asin:
-            resolved.append((asin, title or cand))
-            seen_asin.add(asin)
-        if len(resolved) >= target_n:
+    # Deduplicate candidates
+    seen_raw = set()
+    deduped_candidates: List[str] = []
+    for c in candidates:
+        key = c.strip().lower()
+        if key not in seen_raw:
+            seen_raw.add(key)
+            deduped_candidates.append(c)
+
+    # Resolve products
+    resolved_titles: List[str] = []
+    seen_titles_norm = set()
+    for cand in deduped_candidates:
+        _, title, _ = _resolve_product(cand)
+        if title:
+            norm = title.strip().lower()
+            if norm not in seen_titles_norm:
+                seen_titles_norm.add(norm)
+                resolved_titles.append(title)
+        if len(resolved_titles) >= target_n:
             break
 
-    # Fallback: fill from catalog by semantic search on the whole query
-    if len(resolved) < target_n:
-        results = catalog.similarity_search_with_score(query or "compare products", k=target_n + 2)
-        for doc, _ in results:
-            asin = (doc.metadata or {}).get("ASIN")
+    # Fallback: semantic search on QA DB only (faster: no scores returned)
+    if len(resolved_titles) < target_n:
+        # use similarity_search (returns docs) instead of similarity_search_with_score (docs + scores)
+        results = qa.similarity_search(query or "compare products", k=target_n + 4)
+        for doc in results:
             title = (doc.metadata or {}).get("Title")
-            if asin and asin not in seen_asin:
-                resolved.append((asin, title or "Unknown"))
-                seen_asin.add(asin)
-            if len(resolved) >= target_n:
+            if not title:
+                continue
+            norm = title.strip().lower()
+            if norm not in seen_titles_norm:
+                seen_titles_norm.add(norm)
+                resolved_titles.append(title)
+            if len(resolved_titles) >= target_n:
                 break
 
-    if len(resolved) < 2:
+    if len(resolved_titles) < 2:
         return "I couldn't identify enough products to compare. Please specify at least two."
 
-    # Retrieve contexts per product
-    qa = _qa_db()
-    contexts = []  # list of (asin, title, context)
-    for asin, title in resolved[:target_n]:
-        docs = qa.similarity_search(query or title, k=4, filter={"ASIN": asin})
+    # Retrieve contexts (QA DB only)
+    contexts: List[Tuple[str, str]] = []
+    for title in resolved_titles[:target_n]:
+        docs = qa.similarity_search(query or title, k=4)
         ctx = _join_context([d.page_content for d in docs])
-        contexts.append((asin, title, ctx))
+        contexts.append((title, ctx))
 
-    # If any context missing, warn gracefully
-    if any(not ctx for _, _, ctx in contexts):
+    if any(not ctx for _, ctx in contexts):
         return (
             "I couldn't retrieve enough information for all requested products to compare them reliably. "
             "Try specifying different products or updating the product data."
         )
 
-    # Build dynamic prompt for N products
+    # Build prompt
     sys = (
-    "You are comparing two or more products. "
-    "- First resolve which products the user means (match title/ASIN)."
-    "- Start, output with 'Product Comparison:'."
-    "- Only compare products from the same category. "
-    "- When showing each product, use the format: 'Product Name (ASIN: XXXXXXXX)'. "
-    "- If a requested product cannot be found, ask the user to clarify. "
-    "- Do not add unrelated products. "
-    "- Provide the comparison in a clear, structured way (e.g., bullet points or table style). "
-    "- In the end, summarize which product may be better suited based on the available details."
+        "You are comparing two or more products. "
+        "- First resolve which products the user means (match title). "
+        "- Start, output with 'Product Comparison:'. "
+        "- Only compare products from the same category. "
+        "- Present the results in a Markdown table with the columns: Name, Category, and ASIN. "
+        "- Afterward, for each product, provide a brief summary of its key features and benefits. "
+        "- If a requested product cannot be found, ask the user to clarify. "
+        "- Do not add unrelated products. "
+        "- Provide the comparison in a clear, structured way (e.g., bullet points or table style). "
+        "- In the end, summarize which product may be better suited based on the available details."
     )
 
-
     human_lines = []
-    for idx, (asin, title, ctx) in enumerate(contexts, start=1):
-        human_lines.append(f"Product {idx}: {title} (ASIN: {asin})\nContext {idx}:\n{ctx}")
+    for idx, (title, ctx) in enumerate(contexts, start=1):
+        human_lines.append(f"Product {idx}: {title}\nContext {idx}:\n{ctx}")
     human = "\n\n".join(human_lines)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", sys),
         ("human", human),
     ])
+
     llm = _llm()
     out = llm.invoke(prompt.format_messages())
-    anchor_line = f"Product: {resolved[0][1]} (ASIN: {resolved[0][0]})\n" if resolved else ""
-    return anchor_line + (out.content or "")
+    return out.content or ""
 
-    
 # Optional convenience: expose a small registry for external imports
 TOOLS = [answer_product_question, recommend_products, compare_products]

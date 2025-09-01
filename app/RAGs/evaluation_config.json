@@ -1,0 +1,32 @@
+{
+  "metrics": {
+    "intent_accuracy": {
+      "name": "Intent Classification Accuracy",
+      "type": "G-Eval",
+      "criteria": "Evaluate intent classification correctness"
+    },
+    "context_awareness": {
+      "name": "Context Awareness",
+      "type": "G-Eval",
+      "criteria": "Evaluate conversation context usage"
+    },
+    "response_appropriateness": {
+      "name": "Response Appropriateness",
+      "type": "G-Eval",
+      "criteria": "Evaluate response quality for intent"
+    }
+  },
+  "test_categories": [
+    "intent_classification",
+    "end_to_end_flow",
+    "conversation_memory",
+    "edge_cases"
+  ],
+  "intents": [
+    "complaint",
+    "qna",
+    "abort",
+    "reset",
+    "exit"
+  ]
+}

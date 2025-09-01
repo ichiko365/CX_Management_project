@@ -35,7 +35,8 @@ class ComplaintHandler:
         elif not self.state.get("complaint_logged"):
             start_node = "log_complaint"
         else:
-            return "Your complaint has been successfully logged. Is there anything else I can help you with?"
+            self.reset()
+            
         
         # Run the graph from the appropriate node
         try:

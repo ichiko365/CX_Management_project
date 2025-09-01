@@ -1379,7 +1379,7 @@ def page_chat():
 	st.subheader("📝 Sample Queries")
 	sample_queries = [
 		"I have a complaint about my order",
-		"How to return a product?",
+		"Suggest me 3 powder product you have.",
 		"What did we discuss about skincare?",
 		"What beauty products do you recommend?",
 		"Compare AHAVA Clineral X-Zem Hand Cream & AHAVA Men's Dead Sea Mineral Hand Cream",

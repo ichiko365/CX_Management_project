@@ -1,0 +1,26 @@
+{
+  "intent_classification": {
+    "error": "No test cases processed"
+  },
+  "end_to_end": {
+    "error": "No E2E test cases processed"
+  },
+  "conversation_memory": {
+    "error": "No memory test cases processed"
+  },
+  "edge_cases": {
+    "error": "No edge test cases processed"
+  },
+  "summary": {
+    "timestamp": "2025-08-31T17:16:35.831862",
+    "total_test_cases": 0,
+    "metrics_summary": {},
+    "recommendations": [
+      "Monitor intent classification accuracy in production",
+      "Add more edge case handling for ambiguous inputs",
+      "Implement conversation context weighting for better classification",
+      "Consider adding confidence scores to intent predictions",
+      "Set up continuous evaluation pipeline for new test cases"
+    ]
+  }
+}
