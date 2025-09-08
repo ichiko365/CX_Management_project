@@ -12,7 +12,8 @@ from processing.team_task import (
     calculate_performance_metrics,
     fetch_team_performance_data,
     calculate_team_efficiency,
-    calculate_time_ago
+    calculate_time_ago,
+    toggle_complaint_status
 )
 
 st.set_page_config(layout="wide")
@@ -899,168 +900,202 @@ def _team_management_page():
         color: #1f2937;
         text-decoration: underline;
     }
+
+    /* Team page table/card styling to match team.png */
+    .queue-card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+        padding: 1rem 1rem 0.25rem 1rem;
+    }
+    .queue-header {
+        display:flex; flex-direction:column; gap:4px; margin-bottom:8px;
+    }
+    .queue-title {
+        font-weight: 800; font-size: 1.05rem; color:#111827; display:flex; align-items:center; gap:8px;
+    }
+    .queue-title .icon { color:#ef4444; }
+    .queue-subtitle { color:#6b7280; font-size:0.9rem; }
+    .queue-table { width:100%; border-collapse: separate; border-spacing:0; }
+    .queue-table thead th { text-align:left; font-weight:600; color:#111827; font-size:0.9rem; padding:12px 8px; border-top:1px solid #e5e7eb; border-bottom:1px solid #e5e7eb; }
+    .queue-table tbody td { padding:14px 8px; vertical-align:top; border-bottom:1px solid #e5e7eb; color:#111827; }
+    .queue-table tbody tr:last-child td { border-bottom:none; }
+    .cust-name { font-weight:700; }
+    .cust-time { color:#6b7280; font-size:0.85rem; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px; font-weight:700; font-size:0.8rem; }
+    .pill-critical { background:#ef4444; color:#ffffff; }
+    .pill-high { background:#ffedd5; color:#b45309; }
+    .pill-medium { background:#e5f3ff; color:#1e40af; }
+    .pill-low { background:#f3f4f6; color:#374151; }
+
+    /* Team performance table shares the same look */
+    .team-card { background:#ffffff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,0.04); padding:1rem 1rem 0.25rem 1rem; }
+    .team-title { font-weight:800; font-size:1.05rem; color:#111827; }
+    .team-subtitle { color:#6b7280; font-size:0.9rem; margin-top:4px; }
+    .team-table { width:100%; border-collapse:separate; border-spacing:0; }
+    .team-table thead th { text-align:left; font-weight:600; color:#111827; font-size:0.9rem; padding:12px 8px; border-top:1px solid #e5e7eb; border-bottom:1px solid #e5e7eb; }
+    .team-table tbody td { padding:14px 8px; vertical-align:middle; border-bottom:1px solid #e5e7eb; color:#111827; }
+    .team-table tbody tr:last-child td { border-bottom:none; }
+    .bar { background:#f3f4f6; border-radius:8px; height:8px; width:100%; position:relative; }
+    .bar > span { position:absolute; left:0; top:0; height:100%; border-radius:8px; display:block; }
     </style>
     """, unsafe_allow_html=True)
 
     def render_urgent_queue_card(df: pd.DataFrame):
-        """Render the urgent feedback queue card"""
-        st.markdown("""
-        <div style="background-color: #f8fafc; padding: 1rem; border-radius: 0.5rem; border: 1px solid #e2e8f0; margin-bottom: 1rem;">
-            <h3 style="color: #dc2626; margin: 0; font-size: 1.25rem; font-weight: bold;">
-                🔔 Issues Queue
-            </h3>
-            <p style="color: #6b7280; font-size: 0.9rem; margin: 0.25rem 0 0 0;">
-                Customer complaints and support requests
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if df.empty:
-            st.info("No items in the queue.")
-            return
-        
-        # Filter and prepare display data directly from support data
+        """Render the urgent feedback queue card as a styled table (team.png look)"""
         try:
-            # Filter for open/unresolved issues
-            urgent_df = df[df['status'].str.lower().isin(['open', 'pending', 'new'])].copy()
-            
-            if urgent_df.empty:
+            if df is None or df.empty:
+                st.info("No items in the queue.")
+                return
+
+            # Keep only active/open statuses when present
+            active = df.copy()
+            if 'status' in active.columns:
+                try:
+                    active = active[active['status'].astype(str).str.lower().isin(['open','pending','new','in progress','in_progress'])]
+                except Exception:
+                    pass
+
+            if active.empty:
                 st.info("No urgent items in the queue.")
                 return
+
+            # Sort by urgency/priority/created_at
+            if 'urgency' in active.columns:
+                active = active.sort_values('urgency', ascending=False)
+            elif 'urgency_score' in active.columns:
+                active = active.sort_values('urgency_score', ascending=False)
+            elif 'priority' in active.columns:
+                active = active.sort_values('priority', ascending=False)
+            elif 'created_at' in active.columns:
+                active = active.sort_values('created_at', ascending=False)
+
+            active = active.head(5)
+
+            # Build HTML table without Action column (we'll add buttons below)
+            rows_html = []
+            for idx, r in active.iterrows():
+                customer = r.get('user_name', r.get('customer_name', r.get('name', 'Unknown')))
+                issue = r.get('summary', r.get('description', r.get('issue', 'No summary available')))
+                assigned = r.get('team_member_name', r.get('assigned_to', 'Unassigned'))
+                dept = r.get('department_name', '')
+                created_val = r.get('created_at', '')
+                time_txt = ''
+                try:
+                    time_txt = calculate_time_ago(str(created_val)) if str(created_val) else ''
+                except Exception:
+                    time_txt = ''
+
+                issue_disp = str(issue)
+                if len(issue_disp) > 70:
+                    issue_short = issue_disp[:70] + '...'
+                    issue_html = f"<div class='tooltip-container'><span class='issue-preview'>{issue_short}</span><span class='tooltip-text'>{issue_disp}</span></div>"
+                else:
+                    issue_html = f"<span class='issue-preview'>{issue_disp}</span>"
+
+                cust_html = f"<div class='cust-name'>{customer}</div>"
+                if time_txt:
+                    cust_html += f"<div class='cust-time'>{time_txt}</div>"
+
+                assigned_html = (f"<div><strong>{assigned}</strong></div>" if assigned and assigned != 'Unassigned' else "<em>Unassigned</em>")
+                if dept:
+                    assigned_html += f"<div class='cust-time'>{dept}</div>"
+
+                row_html = (
+                    f"<tr>"
+                    f"<td style='width:30%;'>{cust_html}</td>"
+                    f"<td style='width:50%;'>{issue_html}</td>"
+                    f"<td style='width:20%;'>{assigned_html}</td>"
+                    f"</tr>"
+                )
+                rows_html.append(row_html)
+
+            table_html = (
+                "<div class='queue-card'>"
+                "  <div class='queue-header'>"
+                "    <div class='queue-title'><span class='icon'>🔔</span> Urgent Feedback Queue</div>"
+                "    <div class='queue-subtitle'>Critical issues requiring immediate attention</div>"
+                "  </div>"
+                "  <table class='queue-table'>"
+                "    <thead><tr>"
+                "      <th style='width:30%;'>Customer</th>"
+                "      <th style='width:50%;'>Issue</th>"
+                "      <th style='width:20%;'>Assigned To</th>"
+                "    </tr></thead>"
+                "    <tbody>" + "".join(rows_html) + "</tbody>"
+                "  </table>"
+                "</div>"
+            )
+
+            st.markdown(table_html, unsafe_allow_html=True)
             
-            # Sort by urgency if available, otherwise by created_at (newest first)
-            if 'urgency' in urgent_df.columns:
-                urgent_df = urgent_df.sort_values('urgency', ascending=False)
-            elif 'priority' in urgent_df.columns:
-                urgent_df = urgent_df.sort_values('priority', ascending=False)
-            elif 'created_at' in urgent_df.columns:
-                urgent_df = urgent_df.sort_values('created_at', ascending=False)
-            
-            # Limit to top 5
-            urgent_df = urgent_df.head(5)
-            
-            # Table headers
-            col1, col2, col3, col4 = st.columns([2, 4, 2, 1])
-            with col1:
-                st.markdown("**Customer**")
-            with col2:
-                st.markdown("**Issue**")
-            with col3:
-                st.markdown("**Assigned To**")
-            with col4:
-                st.markdown("**Time**")
-            
-            st.markdown("---")
-            
-            # Display each issue
-            for idx, row in urgent_df.iterrows():
-                # Get customer name (adapt to different column names)
-                customer_name = row.get('user_name', row.get('customer_name', row.get('name', 'Unknown')))
-                
-                # Get issue description (adapt to different column names)
-                full_issue = row.get('summary', row.get('description', row.get('issue', 'No summary available')))
-                
-                # Get assigned team member
-                assigned_to = row.get('team_member_name', row.get('assigned_to', 'Unassigned'))
-                
-                # Get department
-                dept_name = row.get('department_name', 'No Department')
-                
-                # Get time
-                time_info = calculate_time_ago(str(row.get('created_at', ''))) if 'created_at' in row else ''
-                
-                col1, col2, col3, col4 = st.columns([2, 4, 2, 1])
-                
-                with col1:
-                    st.markdown(f"**{customer_name}**")
-                
-                with col2:
-                    # Display truncated issue with tooltip for full text
-                    if len(str(full_issue)) > 80:
-                        truncated_issue = str(full_issue)[:80] + "..."
-                        st.markdown(f"""
-                        <div class="tooltip-container">
-                            <span class="issue-preview">{truncated_issue}</span>
-                            <span class="tooltip-text">{full_issue}</span>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"*{full_issue}*")
-                
-                with col3:
-                    if assigned_to and assigned_to != 'Unassigned':
-                        st.markdown(f"**{assigned_to}**")
-                        if dept_name and dept_name != 'No Department':
-                            st.caption(dept_name)
-                    else:
-                        st.markdown("*Unassigned*")
-                
-                with col4:
-                    if time_info:
-                        st.caption(time_info)
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                
+            # Add action buttons below the table with proper spacing
+            st.markdown("##### Actions")
+            for idx, r in active.iterrows():
+                complaint_id = r.get('id', None)
+                customer = r.get('user_name', r.get('customer_name', r.get('name', 'Unknown')))
+                issue = r.get('summary', r.get('description', r.get('issue', 'No summary available')))
+                if complaint_id:
+                    col1, col2, col3 = st.columns([4, 2, 4])
+                    with col1:
+                        st.write(f"**{customer}**: {issue[:50]}...")
+                    with col2:
+                        if st.button("Close", key=f"close_{complaint_id}_{idx}", type="secondary", use_container_width=True, help=f"Close complaint for {customer}"):
+                            if toggle_complaint_status(complaint_id):
+                                st.success(f"Complaint for {customer} has been closed!")
+                                st.rerun()
         except Exception as e:
             st.error(f"Error displaying urgent queue: {e}")
             st.info("No items in the queue.")
 
     def render_team_performance_card(team_df: pd.DataFrame):
-        """Render the team performance card"""
-        if team_df.empty:
+        """Render the team performance card as a styled table to match queue look"""
+        if team_df is None or team_df.empty:
             st.info("No team performance data available.")
             return
-        
-        st.markdown("""
-        <div style="background-color: #f8fafc; padding: 1rem; border-radius: 0.5rem; border: 1px solid #e2e8f0; margin-bottom: 1rem;">
-            <h3 style="color: #7c3aed; margin: 0; font-size: 1.25rem; font-weight: bold;">
-                👥 Team Performance
-            </h3>
-            <p style="color: #6b7280; font-size: 0.9rem; margin: 0.25rem 0 0 0;">
-                Task allocation and performance metrics
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Table headers
-        col1, col2, col3 = st.columns([3, 2, 2])
-        with col1:
-            st.markdown("**Team Member**")
-        with col2:
-            st.markdown("**Tasks**")  
-        with col3:
-            st.markdown("**Completion**")
-        
-        st.markdown("---")
-        
-        # Display each team member (limited to 5)
-        for idx, row in team_df.head(5).iterrows():
-            col1, col2, col3 = st.columns([3, 2, 2])
-            
-            with col1:
-                department = row.get('department_name', 'No Department')
-                st.markdown(f"**{row['name']}**")
-                st.caption(department)
-            
-            with col2:
-                total_tasks = int(row['total_tasks'])
-                completed_tasks = int(row['completed_tasks'])
-                
-                st.markdown(f"{total_tasks} assigned")
-                st.caption(f"{completed_tasks} completed")
-            
-            with col3:
-                completion_pct = int(row['completion_percentage'])
-                progress_color = "#10b981" if completion_pct >= 80 else "#f59e0b" if completion_pct >= 60 else "#ef4444"
-                
-                st.markdown(f"""
-                <div style="background-color: #f3f4f6; border-radius: 0.5rem; height: 0.5rem; margin: 0.25rem 0;">
-                    <div style="background-color: {progress_color}; width: {completion_pct}%; height: 100%; border-radius: 0.5rem;"></div>
-                </div>
-                <small style="color: #6b7280;">{completion_pct}%</small>
-                """, unsafe_allow_html=True)
-            
-            st.markdown("<br>", unsafe_allow_html=True)
+
+        try:
+            rows = []
+            for _, r in team_df.head(5).iterrows():
+                name = r.get('name', '—')
+                dept = r.get('department_name', '')
+                total_tasks = int(r.get('total_tasks', 0) or 0)
+                completed_tasks = int(r.get('completed_tasks', 0) or 0)
+                completion_pct = int(r.get('completion_percentage', 0) or 0)
+                color = "#10b981" if completion_pct >= 80 else ("#f59e0b" if completion_pct >= 60 else "#ef4444")
+
+                member_html = f"<div style='font-weight:700;'>{name}</div>" + (f"<div class='cust-time'>{dept}</div>" if dept else "")
+                tasks_html = f"<div>{total_tasks} assigned</div><div class='cust-time'>{completed_tasks} completed</div>"
+                comp_html = (
+                    f"<div class='bar'><span style='background:{color}; width:{completion_pct}%;'></span></div>"
+                    f"<div class='cust-time' style='margin-top:6px;'>{completion_pct}%</div>"
+                )
+                rows.append(
+                    f"<tr>"
+                    f"<td style='width:40%;'>{member_html}</td>"
+                    f"<td style='width:20%;'>{tasks_html}</td>"
+                    f"<td style='width:40%;'>{comp_html}</td>"
+                    f"</tr>"
+                )
+
+            html = (
+                "<div class='team-card'>"
+                "  <div class='team-title'>👥 Team Performance</div>"
+                "  <div class='team-subtitle'>Task allocation and completion rates</div>"
+                "  <table class='team-table'>"
+                "    <thead><tr>"
+                "      <th style='width:40%;'>Team Member</th>"
+                "      <th style='width:20%;'>Tasks</th>"
+                "      <th style='width:40%;'>Completion</th>"
+                "    </tr></thead>"
+                "    <tbody>" + "".join(rows) + "</tbody>"
+                "  </table>"
+                "</div>"
+            )
+            st.markdown(html, unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Failed to render team performance: {e}")
 
     def render_metrics_cards(metrics: dict, team_performance_df: pd.DataFrame):
         """Render metrics cards"""

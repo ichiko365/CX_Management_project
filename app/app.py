@@ -8,6 +8,8 @@ from pathlib import Path
 import sqlite3
 import uuid
 import base64
+import threading
+from datetime import datetime
 
 import requests
 from urllib.parse import urlparse, parse_qs
@@ -26,6 +28,52 @@ def _get_image_base64(image_path: str) -> str:
 			return base64.b64encode(img_file.read()).decode()
 	except Exception:
 		return ""
+
+def _run_pipeline_async():
+	"""Run the prediction pipeline asynchronously after review submission."""
+	try:
+		# Get the project root directory
+		current_dir = Path(__file__).resolve().parent
+		project_root = current_dir.parent  # Go up one level from app/ to project root
+		pipeline_script = project_root / "run_pipeline.py"
+		
+		if not pipeline_script.exists():
+			print(f"Pipeline script not found at: {pipeline_script}")
+			return
+			
+		# Run the pipeline script
+		env = os.environ.copy()
+		env["PYTHONPATH"] = str(project_root)
+		
+		result = subprocess.run(
+			[sys.executable, str(pipeline_script)],
+			cwd=str(project_root),
+			env=env,
+			capture_output=True,
+			text=True,
+			timeout=300  # 5 minute timeout
+		)
+		
+		if result.returncode == 0:
+			print("Pipeline executed successfully")
+		else:
+			print(f"Pipeline execution failed: {result.stderr}")
+			
+	except subprocess.TimeoutExpired:
+		print("Pipeline execution timed out")
+	except Exception as e:
+		print(f"Error running pipeline: {e}")
+
+def _trigger_pipeline():
+	"""Trigger the pipeline to run in a background thread."""
+	try:
+		# Run pipeline in background thread to avoid blocking the UI
+		pipeline_thread = threading.Thread(target=_run_pipeline_async, daemon=True)
+		pipeline_thread.start()
+		return True
+	except Exception as e:
+		print(f"Error starting pipeline thread: {e}")
+		return False
 
 # ----------------------- Theme & styles -------------------
 st.markdown(
@@ -1189,6 +1237,7 @@ def page_dashboard():
 			"Description": (description or resolved_desc or None),
 			"Review": review_text.strip(),
 			"Region": region,
+			"ReviewTime": datetime.now().isoformat(),
 		}
 
 		# Basic validation: need Title and Review, and must resolve ASIN
@@ -1203,6 +1252,11 @@ def page_dashboard():
 				if res.status_code == 201:
 					data = res.json()
 					st.success(f"🎉 Thank you for your review! Successfully submitted with ID: {data.get('id')}")
+					
+					# Trigger the prediction pipeline after successful review submission
+					pipeline_started = _trigger_pipeline()
+					if pipeline_started:
+						st.info("🔄 Processing your review data in the background...")
 					
 					# Update current image URL for display if we have one
 					if resolved_image:

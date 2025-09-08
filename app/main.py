@@ -206,9 +206,9 @@ def add_review_to_queue(review: ReviewInput, background_tasks: BackgroundTasks):
 		insert_sql = text(
 			"""
 			INSERT INTO raw_reviews
-				("ASIN", "Title", "Description", "Region", "Review", "analysis_status")
+				("ASIN", "Title", "Description", "Region", "Review", "ReviewTime", "analysis_status")
 			VALUES
-				(:ASIN, :Title, :Description, :Region, :Review, 'pending')
+				(:ASIN, :Title, :Description, :Region, :Review, :ReviewTime, 'pending')
 			RETURNING id;
 			"""
 		)

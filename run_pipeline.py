@@ -27,7 +27,7 @@ def main():
     if not db_engine:
         log.error("Aborting pipeline due to database connection failure."); return
 
-    pending_df = fetch_pending_reviews(engine=db_engine, batch_size=150)
+    pending_df = fetch_pending_reviews(engine=db_engine, batch_size=1)
     if pending_df.empty:
         log.info("No pending reviews found. Exiting pipeline."); return
     log.info(f"Stage 1 complete. Fetched {len(pending_df)} reviews.")
@@ -44,7 +44,7 @@ def main():
     # === STAGE 3: LLM ANALYSIS ===
     log.info("Initiating Stage 3: LLM Analysis")
     try:
-        analyzer = LLMAnalysis(model_name="llama3") # other option: deepseek-r1:8b; gpt_models; llama3; google
+        analyzer = LLMAnalysis(model_name="deepseek-r1:8b") # other option: deepseek-r1:8b; gpt_models; llama3; google
         final_results = analyzer.run_analysis_on_list(llm_ready_data)
         log.info(f"Stage 3 complete. Successfully analyzed {len(final_results)} records.")
     except Exception as e:

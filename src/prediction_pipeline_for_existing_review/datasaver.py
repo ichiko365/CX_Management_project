@@ -1,6 +1,7 @@
 import os
 import logging
 import json
+import pandas as pd
 from typing import List, Dict
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -18,6 +19,12 @@ class DataSaver:
         
         if self.result_engine:
             self._create_results_table_if_not_exists()
+    
+    def _handle_nat_values(self, value):
+        """Convert pandas NaT values to None for database compatibility."""
+        if pd.isna(value):
+            return None
+        return value
 
     def _create_engine(self, db_name):
         """Helper function to create a SQLAlchemy engine."""
@@ -110,7 +117,7 @@ class DataSaver:
                         "urgency": result.get('urgency_score'),
                         "tags": result.get('issue_tags'),
                         "category": result.get('primary_category'),
-                        "review_date": result.get('review_date')
+                        "review_date": self._handle_nat_values(result.get('review_date'))
                     }
                     result_session.execute(insert_sql, params)
                 

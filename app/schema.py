@@ -22,6 +22,7 @@ class ReviewInput(BaseModel):
     Description: Optional[str] = Field(None, example="Moisturizing serum with vitamin C")
     Review: str = Field(..., example="This is the best product ever.")
     Region: Optional[str] = Field(None, example="Bengaluru")
+    ReviewTime: Optional[str] = Field(None, example="2024-01-15T10:30:00")
 
     @model_validator(mode="after")
     def autofill_from_db(self) -> "ReviewInput":

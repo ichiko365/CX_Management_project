@@ -437,38 +437,70 @@ def toggle_task_status(team_member_id: int) -> bool:
                 print(f"Warning: failed to dispose engine properly: {e}")
 
 
-if __name__ == "__main__":
+def toggle_complaint_status(complaint_id: int) -> bool:
+    """
+    Toggle complaint status between 'open' and 'closed'.
+    
+    Args:
+        complaint_id: ID of the complaint to toggle
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    conn = None
+    try:
+        conn = get_customer_db_connection()
+        if not conn:
+            try:
+                st.error("Unable to connect to customer database")
+            except:
+                print("Unable to connect to customer database")
+            return False
+        
+        with conn.connect() as db_conn:
+            # Get current status
+            result = db_conn.execute(text("""
+                SELECT status FROM complaints 
+                WHERE id = :complaint_id
+            """), {"complaint_id": complaint_id})
+            
+            row = result.fetchone()
+            if not row:
+                try:
+                    st.error("Complaint not found")
+                except:
+                    print("Complaint not found")
+                return False
+            
+            current_status = row[0]
+            new_status = 'closed' if current_status == 'open' else 'open'
+            
+            # Update status
+            db_conn.execute(text("""
+                UPDATE complaints 
+                SET status = :new_status
+                WHERE id = :complaint_id
+            """), {"complaint_id": complaint_id, "new_status": new_status})
+            db_conn.commit()
+            
+            try:
+                st.success(f"Status changed to {new_status}")
+            except:
+                print(f"Status changed to {new_status}")
+            return True
+
+    except Exception as e:
+        error_msg = f"Error toggling complaint status: {e}"
+        try:
+            st.error(error_msg)
+        except:
+            print(error_msg)
+        return False
+    finally:
+        if conn:
+            try:
+                conn.dispose()
+            except Exception as e:
+                print(f"Warning: failed to dispose engine properly: {e}")
     result = calculate_team_efficiency(fetch_team_performance_data())
     print("Here is the answer:")
     print(result)
-
-
-    
-# Utility functions for backward compatibility
-def get_complaints_data() -> pd.DataFrame:
-    """Backward compatibility wrapper for get_support_data."""
-    return get_support_data()
-
-
-def refresh_complaints_data() -> bool:
-    """Backward compatibility wrapper for refresh_data."""
-    return refresh_data()
-
-
-def get_time_ago(created_at: str) -> str:
-    """Backward compatibility wrapper for calculate_time_ago."""
-    return calculate_time_ago(created_at)
-
-
-def get_team_performance_metrics(df: pd.DataFrame) -> Dict:
-    """Backward compatibility wrapper for calculate_performance_metrics."""
-    return calculate_performance_metrics(df)
-
-def get_team_performance_data() -> pd.DataFrame:
-    """Backward compatibility wrapper for fetch_team_performance_data."""
-    return fetch_team_performance_data()
-
-
-def toggle_oldest_task_status(team_member_id: int) -> bool:
-    """Backward compatibility wrapper for toggle_task_status."""
-    return toggle_task_status(team_member_id)
